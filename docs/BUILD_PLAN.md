@@ -23,7 +23,7 @@
 
 | Phase | Name | Status |
 |---|---|---|
-| 0 | Project setup & scope | 🟨 In progress |
+| 0 | Project setup & scope | ✅ Complete (Sarvam live smoke test deferred) |
 | 1 | Booking engine (no AI) | ✅ Complete |
 | 2 | Text agent "brain" | ⬜ Not started |
 | 3 | FAQ RAG | ⬜ Not started |
@@ -120,7 +120,7 @@ asyncio_mode = "auto"
 - [x] 0.1 Create the GitHub repo `hinglish-receptionist` with a `README.md`, `.gitignore` (Python) and MIT `LICENSE`.
 - [x] 0.2 Create the folder structure above (empty files are fine).
 - [x] 0.3 Create a virtualenv on Python 3.11 and add dependencies: `pipecat-ai[sarvam,silero,webrtc]`, `fastapi`, `uvicorn`, `sqlmodel`, `chromadb`, `httpx`, `pyyaml`, `python-dotenv`, `pydantic-settings`, `pytest`, `pytest-asyncio`, `ruff`.
-- [ ] 0.4 Create accounts: Sarvam AI (API key) ✅, Google Cloud (Calendar API enabled, service account created, calendar shared, `.env` configured) ✅, Twilio (trial account + SID/Auth Token in `.env`; buying a number deferred to Phase 8 since it needs a paid upgrade) ✅, Meta for Developers (WhatsApp app) 🟨 in progress.
+- [x] 0.4 Create accounts: Sarvam AI (API key) ✅, Google Cloud (Calendar API enabled, service account created, calendar shared, `.env` configured) ✅, Twilio (trial account + SID/Auth Token in `.env`; buying a number deferred to Phase 8 since it needs a paid upgrade) ✅, Meta for Developers (new app "Swagat AI Receptionist" linked to an unrestricted business portfolio, WhatsApp test number + access token in `.env`) ✅.
 - [x] 0.5 Write `.env.example` with every key name (no values) and `app/config.py`, which loads them with `pydantic-settings`.
 - [x] 0.6 Write `data/clinic.yaml`: clinic name, address, working hours, lunch break, weekly off day, services with durations (cleaning 30 min, consultation 15 min, filling 45 min) and slot granularity (15 min).
 - [x] 0.7 Write `data/faqs.md` with **at least 15 Q&As** (fees, timings, parking, payment modes, insurance, location, emergency, kids, etc.).
@@ -154,11 +154,11 @@ def test_golden_calls_well_formed():
 
 ### Manual checks
 - [x] `pytest` runs green locally.
-- [ ] The GitHub Actions run is green.
-- [ ] Each API key works with one hello-world call (Sarvam TTS speaks one sentence to an `.wav` file).
+- [x] The GitHub Actions run is green (verified CI #2 on `cf4041e` — success).
+- [ ] Each API key works with one hello-world call (Sarvam TTS speaks one sentence to an `.wav` file). *Deferred — this is a live, paid API call; CLAUDE.md says not to run live tests unless asked.*
 
 ### ✅ Phase complete when
-The repo builds in CI, all data files exist and are validated, and every account key has been smoke-tested. **Not yet complete** — pending: Google Cloud + Twilio accounts, Meta WhatsApp app (in progress), CI run verification, and the Sarvam TTS smoke test.
+The repo builds in CI, all data files exist and are validated, and every account key has been smoke-tested. **Effectively complete** — all accounts and `.env` keys are in place and CI is green; only the live Sarvam hello-world smoke test remains, deferred until asked (it costs a small amount and isn't needed to start Phase 1/2 work).
 
 ---
 
@@ -228,7 +228,7 @@ All 11+ booking cases and the phone tests pass, and test coverage of `booking.py
 **Time:** 1 week · **Cost:** ~₹0–20 (Sarvam-105B tokens are very cheap)
 
 ### Tasks
-- [ ] 2.1 `app/timeparse.py`: turns Hinglish date and time phrases into datetimes. Cover at least: `aaj`, `kal`, `parso`, weekday names (`somvaar`/`Monday`), `subah`/`dopahar`/`shaam`/`raat`, `saade paanch`, `paune chhe`, `sava das`, `5:30`, `5 baje`, `half past five`.
+- [x] 2.1 `app/timeparse.py`: turns Hinglish date and time phrases into datetimes. Cover at least: `aaj`, `kal`, `parso`, weekday names (`somvaar`/`Monday`), `subah`/`dopahar`/`shaam`/`raat`, `saade paanch`, `paune chhe`, `sava das`, `5:30`, `5 baje`, `half past five`.
 - [ ] 2.2 `app/tools.py`: define the tools with JSON schemas.
   - `check_slots(date, service, part_of_day?)`
   - `book_appointment(name, phone, service, start)`
@@ -250,7 +250,7 @@ All 11+ booking cases and the phone tests pass, and test coverage of `booking.py
 - [ ] 2.7 Guardrails: if a tool errors, the bot apologises and offers alternatives. If the request is off-topic, it gives a polite redirect.
 
 ### Automated tests
-- [ ] `tests/unit/test_timeparse.py`: **at least 30 parametrised phrases** with a fixed "now".
+- [x] `tests/unit/test_timeparse.py`: **at least 30 parametrised phrases** with a fixed "now".
 
 ```python
 import pytest
