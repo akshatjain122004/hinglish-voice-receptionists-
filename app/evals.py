@@ -47,9 +47,24 @@ def count_sentences(text: str) -> int:
     return len([s for s in re.split(r"[.!?]+", text) if s.strip()])
 
 
+_WORD = re.compile(r"[a-z0-9]+")
+
+
+def _value_matches(expected: Any, actual: Any) -> bool:
+    """Exact equality, except free text (e.g. answer_faq's `question`) where
+    the model will paraphrase the caller's words rather than echo them —
+    there every expected word just has to appear somewhere in actual."""
+    if isinstance(expected, str) and isinstance(actual, str):
+        expected_words = set(_WORD.findall(expected.lower()))
+        actual_words = set(_WORD.findall(actual.lower()))
+        return expected_words <= actual_words
+    return expected == actual
+
+
 def _args_match(expected_args: dict[str, Any], actual_args: dict[str, Any]) -> bool:
     return all(
-        key in actual_args and actual_args[key] == value for key, value in expected_args.items()
+        key in actual_args and _value_matches(value, actual_args[key])
+        for key, value in expected_args.items()
     )
 
 

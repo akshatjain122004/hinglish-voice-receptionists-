@@ -69,6 +69,24 @@ class TestCheckToolCalls:
         actual = [{"tool": "check_slots", "args": {"service": "filling"}}]
         assert check_tool_calls(expected, actual) is False
 
+    def test_free_text_arg_matches_by_word_overlap_not_exact_equality(self):
+        """answer_faq's `question` is free text the caller asked, not an
+        enum — the model will paraphrase it, so expected 'insurance' should
+        match an actual question that merely contains that word."""
+        expected = [{"tool": "answer_faq", "args": {"question": "insurance"}}]
+        actual = [{"tool": "answer_faq", "args": {"question": "Do you accept insurance?"}}]
+        assert check_tool_calls(expected, actual) is True
+
+    def test_free_text_arg_with_no_word_overlap_still_fails(self):
+        expected = [{"tool": "answer_faq", "args": {"question": "parking"}}]
+        actual = [{"tool": "answer_faq", "args": {"question": "What time do you open?"}}]
+        assert check_tool_calls(expected, actual) is False
+
+    def test_multi_word_free_text_arg_requires_every_word(self):
+        expected = [{"tool": "answer_faq", "args": {"question": "cleaning fees"}}]
+        actual = [{"tool": "answer_faq", "args": {"question": "Cleaning ki fees kitni hai?"}}]
+        assert check_tool_calls(expected, actual) is True
+
     def test_ordered_sequence_across_multiple_calls(self):
         expected = [
             {"tool": "check_slots", "args": {"service": "cleaning"}},
