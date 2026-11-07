@@ -28,3 +28,8 @@ def test_default_system_prompt_loads_the_real_clinic_name():
 def test_build_system_prompt_never_asks_for_the_phone_number():
     prompt = build_system_prompt("Test Dental Clinic").lower()
     assert "never ask" in prompt and "phone" in prompt
+
+
+def test_build_system_prompt_requires_part_of_day_set_separately():
+    prompt = build_system_prompt("Test Dental Clinic").lower()
+    assert "part_of_day" in prompt
