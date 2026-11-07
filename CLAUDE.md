@@ -2,6 +2,8 @@
 
 Guidance for Claude Code when working in this repository. Read this file and `docs/BUILD_PLAN.md` before making changes.
 
+**Current phase:** 3 — FAQ RAG *(see `docs/BUILD_PLAN.md` status board for the full list; bump this the moment a phase's status board row flips to ✅ Complete. Phase 2 was moved on from by explicit user decision with its gate not formally met — see the status board note on Phase 2 for why)*.
+
 ## What this project is
 
 An AI receptionist that answers a small business's phone (first pilot: a dental clinic in Udaipur). It talks to callers in Hindi, English or Hinglish, checks free slots, books, cancels and reschedules appointments, answers FAQs from the clinic's own notes, and sends WhatsApp confirmations and reminders.
@@ -22,9 +24,9 @@ Caller → Twilio/Plivo (audio stream) → Pipecat pipeline → Silero VAD → S
 
 ## Working style
 
-- **Follow `docs/BUILD_PLAN.md`.** Work on the current phase only, one task at a time. Don't jump ahead to later phases or add features that aren't in the plan without asking.
+- **Follow `docs/BUILD_PLAN.md`.** Check the **Current phase** line above and the plan's status board before starting work. Work on the current phase only, one task at a time. Don't jump ahead to later phases or add features that aren't in the plan without asking.
 - After finishing a task: run the tests, tick the checkbox in `BUILD_PLAN.md`, and suggest a commit message like `phase 2.3: system prompt`.
-- A phase is complete only when every task is ticked, all its tests pass and its "Phase complete when" gate is met. Update the status board when that happens.
+- A phase is complete only when every task is ticked, all its tests pass and its "Phase complete when" gate is met. When that happens, update the status board in `BUILD_PLAN.md` **and** bump the **Current phase** line at the top of this file to the next phase.
 - Make small, focused changes. Explain *why* in a short note when you make a design choice, and record bigger choices in `docs/architecture.md`.
 - If something in the plan is unclear or seems wrong, ask instead of guessing.
 

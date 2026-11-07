@@ -25,8 +25,8 @@
 |---|---|---|
 | 0 | Project setup & scope | ✅ Complete (Sarvam live smoke test deferred) |
 | 1 | Booking engine (no AI) | ✅ Complete |
-| 2 | Text agent "brain" | ⬜ Not started |
-| 3 | FAQ RAG | ⬜ Not started |
+| 2 | Text agent "brain" | 🟨 Code complete, gate not formally met — see note below; moved on by explicit user decision |
+| 3 | FAQ RAG | ⬜ Not started (next up, per phase 2 close-out decision) |
 | 4 | Voice in the browser | ⬜ Not started |
 | 5 | Hinglish + latency hardening | ⬜ Not started |
 | 6 | WhatsApp confirmations & reminders | ⬜ Not started |
@@ -294,7 +294,20 @@ def test_parse(text, expected):
 - [ ] Try to trick it: "5:15 book kar do" when 5:15 isn't free. It must refuse and offer real slots.
 
 ### ✅ Phase complete when
-Unit and integration tests pass, `timeparse` covers ≥ 30 phrases, and **the eval pass rate is ≥ 85%, with 0 hallucinated slots**. **Code complete** — all tasks implemented, offline suite green (timeparse covers 40+ phrases). Still open: run `pytest -m live` eval suite / `scripts/run_evals.py` against the real Sarvam LLM and record the pass rate, and do the manual CLI checks (book/cancel/reschedule in Hindi/English/Hinglish, and the "5:15 book kar do" trick) — both deferred since they're live/manual and cost a little, per CLAUDE.md.
+Unit and integration tests pass, `timeparse` covers ≥ 30 phrases, and **the eval pass rate is ≥ 85%, with 0 hallucinated slots**.
+
+**Status: code complete; gate not formally met.** Offline suite is green (127+ tests, `timeparse` covers 40+ phrases). Ran `scripts/run_evals.py` against the real Sarvam LLM four times while root-causing failures, fixing real bugs each round (not touching `test_calls.yaml`'s expectations, per the rule above): 24% → 44% → 48% → **56% (14/25)** final. Final report: `reports/evals_phase2.md`.
+
+Bugs found and fixed along the way:
+- `check_slots`/`book_appointment`'s `service` param had no enum, so the LLM guessed synonyms ("root canal", "RCT") instead of `clinic.yaml`'s exact keys and retried without ever booking.
+- Nearly every golden booking/cancel/reschedule case never states a phone number — the caller's phone is meant to be channel identity (Twilio caller ID, WhatsApp sender), not something the LLM elicits (matches this file's own example and Phase 8 task 8.4). Fixed: `phone` removed from the LLM-facing tool schemas; `Agent` now takes a session-level `caller_phone` and injects it.
+- The eval harness defaulted `now` to the real wall-clock time instead of a fixed anchor, so "kal"/tomorrow could land on the clinic's weekly-off day depending which real day you ran it — exactly the "fixed now, no `datetime.now()`" rule this file states elsewhere, just not followed in the eval harness itself.
+- Eval grading used exact string equality for free-text tool args (e.g. `answer_faq`'s `question`), failing cases where the tool call was functionally correct but phrased differently than the golden expectation.
+- The eval harness aborted the entire batch on one transient network timeout; now a single flaky case fails on its own and the rest still run.
+
+**Why the gate isn't met, and why we're moving on anyway (explicit user decision, 2026-11-07):** of the 11 remaining failures, 6 trace back to `answer_faq` still being the Phase 3 stub (`found: false` always — it structurally cannot mention real fees/timings yet), and 3 more (`booking_002/003/005`) fail because the model correctly inserts one more "read back and confirm" turn before booking, per this file's own non-negotiable confirm-before-booking rule — the golden scripts are a turn short of reaching it. Per the "don't change `test_calls.yaml` expectations to make a failing eval pass, fix the agent instead, or ask" rule, this was raised with the user rather than adjusted unilaterally; the user chose to move to Phase 3 now and revisit the eval pass rate after FAQ RAG lands (Phase 3 already re-runs the full eval suite with 5 added FAQ cases).
+
+Still open, deferred (not blocking the move to Phase 3): manual `chat_cli.py` checks (book/cancel/reschedule in Hindi/English/Hinglish, and the "5:15 book kar do" trick).
 
 ---
 
