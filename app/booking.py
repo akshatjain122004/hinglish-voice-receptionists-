@@ -59,6 +59,11 @@ def normalize_phone(raw: str) -> str:
     raise InvalidBookingError(f"invalid phone number: {raw}")
 
 
+def service_names() -> list[str]:
+    """Valid service identifiers, e.g. for a tool schema enum."""
+    return sorted(_load_clinic()["services"])
+
+
 def _service_duration(clinic: dict, service: str) -> timedelta:
     if service not in clinic["services"]:
         raise InvalidBookingError(f"unknown service: {service}")
@@ -100,9 +105,13 @@ def get_free_slots(day: date, service: str, part_of_day: str | None = None) -> l
     while cursor + duration <= day_close:
         slot_end = cursor + duration
         overlaps_lunch = cursor < lunch_end and slot_end > lunch_start
-        overlaps_booking = any(cursor < b_end and slot_end > b_start for b_start, b_end in busy_ranges)
-        if not overlaps_lunch and not overlaps_booking and (
-            part_of_day is None or _in_part_of_day(cursor.time(), part_of_day)
+        overlaps_booking = any(
+            cursor < b_end and slot_end > b_start for b_start, b_end in busy_ranges
+        )
+        if (
+            not overlaps_lunch
+            and not overlaps_booking
+            and (part_of_day is None or _in_part_of_day(cursor.time(), part_of_day))
         ):
             slots.append(cursor)
         cursor += slot_step
@@ -180,7 +189,9 @@ def cancel(identifier: int | str) -> None:
         session.commit()
 
 
-def reschedule(appointment_id: int, new_start: datetime, *, now: datetime | None = None) -> db.Appointment:
+def reschedule(
+    appointment_id: int, new_start: datetime, *, now: datetime | None = None
+) -> db.Appointment:
     now = now or datetime.now(IST)
     if new_start < now:
         raise InvalidBookingError("cannot reschedule into the past")

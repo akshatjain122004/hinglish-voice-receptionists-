@@ -103,11 +103,13 @@ class Agent:
         max_tool_rounds: int = MAX_TOOL_ROUNDS,
         now: datetime | None = None,
         system_prompt: str | None = None,
+        caller_phone: str | None = None,
     ) -> None:
         self.llm = llm
         self.max_tool_rounds = max_tool_rounds
         self.now = now
         self.system_prompt = system_prompt or prompts.SYSTEM_PROMPT
+        self.caller_phone = caller_phone
         self._sessions: dict[str, list[dict[str, Any]]] = {}
 
     def _history(self, session_id: str) -> list[dict[str, Any]]:
@@ -121,7 +123,9 @@ class Agent:
         user_text: str,
         *,
         on_tool_call: Callable[[str, dict[str, Any], dict[str, Any]], None] | None = None,
+        caller_phone: str | None = None,
     ) -> str:
+        caller_phone = caller_phone if caller_phone is not None else self.caller_phone
         history = self._history(session_id)
         history.append({"role": "user", "content": user_text})
 
@@ -148,7 +152,9 @@ class Agent:
                 }
             )
             for tc in response.tool_calls:
-                result = tools.call_tool(tc.name, tc.arguments, now=self.now)
+                result = tools.call_tool(
+                    tc.name, tc.arguments, now=self.now, caller_phone=caller_phone
+                )
                 if on_tool_call is not None:
                     on_tool_call(tc.name, tc.arguments, result)
                 history.append(

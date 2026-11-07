@@ -25,6 +25,11 @@ from app.booking import IST
 
 TEST_CALLS_PATH = Path(__file__).resolve().parent.parent / "data" / "test_calls.yaml"
 
+# Stands in for the caller ID a real phone/WhatsApp channel supplies
+# automatically (see app.agent.Agent) — the golden conversations don't state
+# a phone number themselves, since a real caller never has to.
+EVAL_CALLER_PHONE = "9999999999"
+
 
 def load_golden_cases(path: Path = TEST_CALLS_PATH) -> list[dict]:
     return yaml.safe_load(path.read_text())
@@ -122,7 +127,7 @@ async def run_case(case: dict, llm: LLMClient, *, now: datetime | None = None) -
     original_engine = db_module.engine
     db_module.engine = _fresh_engine()
     try:
-        agent = Agent(llm, now=now)
+        agent = Agent(llm, now=now, caller_phone=EVAL_CALLER_PHONE)
         tool_calls: list[dict] = []
         tool_results: list[dict] = []
         replies: list[str] = []

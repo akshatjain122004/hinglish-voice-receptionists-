@@ -32,7 +32,6 @@ async def test_booking_flow_creates_exactly_one_appointment(db):
                         name="book_appointment",
                         arguments={
                             "name": "Ravi",
-                            "phone": "9829012345",
                             "service": "cleaning",
                             "start": "kal shaam saade paanch",
                         },
@@ -44,7 +43,7 @@ async def test_booking_flow_creates_exactly_one_appointment(db):
             ),
         ]
     )
-    agent = Agent(fake, now=NOW)
+    agent = Agent(fake, now=NOW, caller_phone="9829012345")
 
     reply1 = await agent.handle_turn("call-1", "Kal shaam ko cleaning ka slot milega?")
     assert "saade paanch" in reply1.lower()
@@ -79,7 +78,6 @@ async def test_slot_taken_error_lets_the_llm_offer_a_real_alternative(db):
                         name="book_appointment",
                         arguments={
                             "name": "Ravi",
-                            "phone": "9829012345",
                             "service": "cleaning",
                             "start": "kal shaam saade paanch",
                         },
@@ -101,7 +99,7 @@ async def test_slot_taken_error_lets_the_llm_offer_a_real_alternative(db):
             ),
         ]
     )
-    agent = Agent(fake, now=NOW)
+    agent = Agent(fake, now=NOW, caller_phone="9829012345")
 
     reply = await agent.handle_turn("call-2", "Kal shaam saade paanch book kar do, naam Ravi hai.")
 
@@ -176,7 +174,9 @@ async def test_assistant_tool_call_history_matches_openai_schema(db):
                 content=None,
                 tool_calls=[
                     ToolCall(
-                        id="call_1", name="check_slots", arguments={"date": "kal", "service": "cleaning"}
+                        id="call_1",
+                        name="check_slots",
+                        arguments={"date": "kal", "service": "cleaning"},
                     )
                 ],
             ),

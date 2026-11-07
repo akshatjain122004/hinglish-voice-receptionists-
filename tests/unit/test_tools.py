@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 
-from app import tools
+from app import booking, tools
 from app.booking import IST, book, get_free_slots
 
 NOW = datetime(2026, 11, 9, 10, 0, tzinfo=IST)
@@ -142,3 +142,79 @@ def test_tool_schemas_cover_every_tool():
         "answer_faq",
         "transfer_to_human",
     }
+
+
+def _schema_for(name: str) -> dict:
+    return next(s for s in tools.TOOL_SCHEMAS if s["function"]["name"] == name)["function"]
+
+
+class TestToolSchemasDontAskForPhone:
+    """The caller's phone number comes from the channel (Twilio caller ID,
+    WhatsApp sender, etc.), never from the LLM — see app.agent.Agent."""
+
+    def test_book_appointment_schema_has_no_phone_param(self):
+        schema = _schema_for("book_appointment")
+        assert "phone" not in schema["parameters"]["properties"]
+        assert "phone" not in schema["parameters"]["required"]
+
+    def test_cancel_appointment_schema_has_no_phone_param(self):
+        schema = _schema_for("cancel_appointment")
+        assert "phone" not in schema["parameters"]["properties"]
+
+    def test_reschedule_appointment_schema_has_no_phone_param(self):
+        schema = _schema_for("reschedule_appointment")
+        assert "phone" not in schema["parameters"]["properties"]
+        assert schema["parameters"]["required"] == ["new_start"]
+
+
+class TestServiceEnumInSchemas:
+    def test_check_slots_service_enum_matches_clinic_services(self):
+        schema = _schema_for("check_slots")
+        assert schema["parameters"]["properties"]["service"]["enum"] == booking.service_names()
+
+    def test_book_appointment_service_enum_matches_clinic_services(self):
+        schema = _schema_for("book_appointment")
+        assert schema["parameters"]["properties"]["service"]["enum"] == booking.service_names()
+
+
+class TestCallToolInjectsCallerPhone:
+    def test_book_appointment_gets_caller_phone_injected(self, db):
+        result = tools.call_tool(
+            "book_appointment",
+            {"name": "Ravi", "service": "cleaning", "start": "kal shaam saade paanch"},
+            now=NOW,
+            caller_phone="9829012345",
+        )
+        assert result["ok"] is True
+        assert result["appointment"]["phone"] == "+919829012345"
+
+    def test_cancel_appointment_gets_caller_phone_injected(self, db):
+        book("9829012345", "Ravi", "cleaning", _a_free_slot())
+        result = tools.call_tool("cancel_appointment", {}, caller_phone="9829012345")
+        assert result["ok"] is True
+
+    def test_explicit_llm_supplied_phone_is_ignored_in_favour_of_caller_phone(self, db):
+        # The schema no longer exposes `phone`, but defend against a model
+        # hallucinating the field anyway: the real caller identity always wins.
+        result = tools.call_tool(
+            "book_appointment",
+            {
+                "name": "Ravi",
+                "service": "cleaning",
+                "start": "kal shaam saade paanch",
+                "phone": "0000000000",
+            },
+            now=NOW,
+            caller_phone="9829012345",
+        )
+        assert result["ok"] is True
+        assert result["appointment"]["phone"] == "+919829012345"
+
+    def test_no_caller_phone_is_an_error_not_an_exception(self, db):
+        result = tools.call_tool(
+            "book_appointment",
+            {"name": "Ravi", "service": "cleaning", "start": "kal shaam saade paanch"},
+            now=NOW,
+        )
+        assert result["ok"] is False
+        assert "error" in result

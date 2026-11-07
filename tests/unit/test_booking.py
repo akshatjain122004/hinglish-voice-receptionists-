@@ -132,6 +132,16 @@ def test_reschedule_into_the_past_raises(db):
         booking.reschedule(appt.id, NOW - timedelta(days=1), now=NOW)
 
 
+def test_service_names_returns_sorted_clinic_services():
+    assert booking.service_names() == [
+        "cleaning",
+        "consultation",
+        "filling",
+        "root_canal",
+        "whitening",
+    ]
+
+
 def test_find_by_phone_returns_only_confirmed_upcoming_appointments(db):
     start = _dt(11, 0)
     booking.book("+919829012345", "Ravi", "cleaning", start, now=NOW)

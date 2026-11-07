@@ -23,9 +23,13 @@ def _print_tool_call(name: str, arguments: dict, result: dict) -> None:
 async def main() -> None:
     settings = get_settings()
     llm = SarvamLLMClient(api_key=settings.sarvam_api_key)
-    agent = Agent(llm)
 
-    print("Receptionist CLI. Type in Hindi, English or Hinglish. Ctrl+C to quit.\n")
+    # Stands in for the caller ID a real phone/WhatsApp channel would supply
+    # automatically (see app.agent.Agent) — the CLI has to ask once instead.
+    caller_phone = input("Simulated caller phone number: ").strip()
+    agent = Agent(llm, caller_phone=caller_phone)
+
+    print("\nReceptionist CLI. Type in Hindi, English or Hinglish. Ctrl+C to quit.\n")
     while True:
         try:
             user_text = input("you> ").strip()

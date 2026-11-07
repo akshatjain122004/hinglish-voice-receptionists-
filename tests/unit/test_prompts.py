@@ -23,3 +23,8 @@ def test_build_system_prompt_requires_confirmation_before_booking():
 
 def test_default_system_prompt_loads_the_real_clinic_name():
     assert "Mehta Dental Clinic" in SYSTEM_PROMPT
+
+
+def test_build_system_prompt_never_asks_for_the_phone_number():
+    prompt = build_system_prompt("Test Dental Clinic").lower()
+    assert "never ask" in prompt and "phone" in prompt

@@ -164,10 +164,24 @@ REGISTRY: dict[str, Callable[..., dict]] = {
 }
 
 
-def call_tool(name: str, arguments: dict[str, Any], *, now: datetime | None = None) -> dict:
+# The caller's phone number is channel identity (Twilio caller ID, WhatsApp
+# sender, etc.) — the LLM is never asked for it and never supplies it; the
+# agent injects it here instead. See app.agent.Agent(caller_phone=...).
+PHONE_INJECTED_TOOLS = {"book_appointment", "cancel_appointment", "reschedule_appointment"}
+
+
+def call_tool(
+    name: str,
+    arguments: dict[str, Any],
+    *,
+    now: datetime | None = None,
+    caller_phone: str | None = None,
+) -> dict:
     handler = REGISTRY.get(name)
     if handler is None:
         return {"ok": False, "error": f"unknown tool: {name}"}
+    if name in PHONE_INJECTED_TOOLS and caller_phone is not None:
+        arguments = {**arguments, "phone": caller_phone}
     try:
         if handler is cancel_appointment or handler is answer_faq or handler is transfer_to_human:
             return handler(**arguments)
@@ -189,7 +203,11 @@ TOOL_SCHEMAS: list[dict] = [
                         "type": "string",
                         "description": "The day the caller asked about, in their own words, e.g. 'kal' or 'Friday'.",
                     },
-                    "service": {"type": "string", "description": "Service name, e.g. 'cleaning'."},
+                    "service": {
+                        "type": "string",
+                        "enum": booking.service_names(),
+                        "description": "The exact service identifier.",
+                    },
                     "part_of_day": {
                         "type": "string",
                         "enum": ["morning", "afternoon", "evening", "night"],
@@ -209,14 +227,13 @@ TOOL_SCHEMAS: list[dict] = [
                 "type": "object",
                 "properties": {
                     "name": {"type": "string"},
-                    "phone": {"type": "string"},
-                    "service": {"type": "string"},
+                    "service": {"type": "string", "enum": booking.service_names()},
                     "start": {
                         "type": "string",
                         "description": "The confirmed day and time, in the caller's own words.",
                     },
                 },
-                "required": ["name", "phone", "service", "start"],
+                "required": ["name", "service", "start"],
             },
         },
     },
@@ -227,8 +244,8 @@ TOOL_SCHEMAS: list[dict] = [
             "description": "Cancel the caller's upcoming appointment.",
             "parameters": {
                 "type": "object",
-                "properties": {"phone": {"type": "string"}},
-                "required": ["phone"],
+                "properties": {},
+                "required": [],
             },
         },
     },
@@ -240,13 +257,12 @@ TOOL_SCHEMAS: list[dict] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "phone": {"type": "string"},
                     "new_start": {
                         "type": "string",
                         "description": "The new confirmed day and time, in the caller's own words.",
                     },
                 },
-                "required": ["phone", "new_start"],
+                "required": ["new_start"],
             },
         },
     },
