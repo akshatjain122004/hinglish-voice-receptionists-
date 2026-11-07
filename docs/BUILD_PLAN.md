@@ -229,7 +229,7 @@ All 11+ booking cases and the phone tests pass, and test coverage of `booking.py
 
 ### Tasks
 - [x] 2.1 `app/timeparse.py`: turns Hinglish date and time phrases into datetimes. Cover at least: `aaj`, `kal`, `parso`, weekday names (`somvaar`/`Monday`), `subah`/`dopahar`/`shaam`/`raat`, `saade paanch`, `paune chhe`, `sava das`, `5:30`, `5 baje`, `half past five`.
-- [ ] 2.2 `app/tools.py`: define the tools with JSON schemas.
+- [x] 2.2 `app/tools.py`: define the tools with JSON schemas.
   - `check_slots(date, service, part_of_day?)`
   - `book_appointment(name, phone, service, start)`
   - `cancel_appointment(phone)`
@@ -269,7 +269,7 @@ def test_parse(text, expected):
     assert parse(text, now=NOW) == expected
 ```
 
-- [ ] `tests/unit/test_tools.py`: each tool validates its input (bad date, unknown service, bad phone) and returns a JSON-serialisable result.
+- [x] `tests/unit/test_tools.py`: each tool validates its input (bad date, unknown service, bad phone) and returns a JSON-serialisable result.
 - [ ] `tests/integration/test_agent_flow.py`: uses a `FakeLLM` that returns scripted tool calls. Checks that:
   - the booking flow ends with exactly one `Appointment` in the DB;
   - when a tool raises `SlotTakenError`, the agent's next message offers other slots;

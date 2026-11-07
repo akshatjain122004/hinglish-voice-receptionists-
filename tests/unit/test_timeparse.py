@@ -1,8 +1,8 @@
-from datetime import datetime
+from datetime import date, datetime
 
 import pytest
 
-from app.timeparse import TimeParseError, parse
+from app.timeparse import TimeParseError, parse, parse_date
 
 NOW = datetime(2026, 11, 9, 10, 0)  # Monday
 
@@ -66,3 +66,24 @@ def test_parse(text, expected):
 def test_parse_raises_when_no_time_found(text):
     with pytest.raises(TimeParseError):
         parse(text, now=NOW)
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("aaj", date(2026, 11, 9)),
+        ("kal", date(2026, 11, 10)),
+        ("parso", date(2026, 11, 11)),
+        ("today", date(2026, 11, 9)),
+        ("tomorrow", date(2026, 11, 10)),
+        ("Friday", date(2026, 11, 13)),
+        ("kal shaam", date(2026, 11, 10)),
+    ],
+)
+def test_parse_date(text, expected):
+    assert parse_date(text, now=NOW) == expected
+
+
+def test_parse_date_raises_when_no_date_found():
+    with pytest.raises(TimeParseError):
+        parse_date("saade paanch baje", now=NOW)

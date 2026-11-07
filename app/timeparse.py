@@ -181,6 +181,15 @@ def _resolve_time(text: str) -> tuple[int, int] | None:
     return None
 
 
+def parse_date(text: str, *, now: datetime) -> datetime.date:
+    """Parse just the day from a phrase (no clock time required), e.g. for
+    `check_slots`, which only needs a date plus a separate part_of_day."""
+    date_part = _resolve_date(text.lower(), now)
+    if date_part is None:
+        raise TimeParseError(f"could not parse a date from: {text!r}")
+    return date_part
+
+
 def parse(text: str, *, now: datetime) -> datetime:
     """Parse a Hinglish/Hindi/English date-and-time phrase relative to `now`."""
     normalised = text.lower()
