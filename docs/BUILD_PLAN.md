@@ -236,7 +236,7 @@ All 11+ booking cases and the phone tests pass, and test coverage of `booking.py
   - `reschedule_appointment(phone, new_start)`
   - `answer_faq(question)` (a stub for now; real RAG comes in Phase 3)
   - `transfer_to_human(reason)`
-- [ ] 2.3 `app/prompts.py`: the system prompt. It should:
+- [x] 2.3 `app/prompts.py`: the system prompt. It should:
   - be a polite clinic receptionist;
   - reply in the caller's language (Hinglish in, Hinglish out);
   - keep replies to at most 2 short sentences;
