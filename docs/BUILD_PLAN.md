@@ -244,10 +244,10 @@ All 11+ booking cases and the phone tests pass, and test coverage of `booking.py
   - always confirm the details before booking;
   - collect the name before booking;
   - write numbers and times in a way that can be spoken.
-- [ ] 2.4 `app/agent.py`: the tool-calling loop. Send the message, run any tool calls, feed the results back, and repeat (maximum 4 tool rounds per turn). Keep the conversation history per session.
-- [ ] 2.5 The LLM client sits behind an interface (`LLMClient.chat(messages, tools)`) so tests can plug in a `FakeLLM`.
+- [x] 2.4 `app/agent.py`: the tool-calling loop. Send the message, run any tool calls, feed the results back, and repeat (maximum 4 tool rounds per turn). Keep the conversation history per session.
+- [x] 2.5 The LLM client sits behind an interface (`LLMClient.chat(messages, tools)`) so tests can plug in a `FakeLLM`.
 - [ ] 2.6 `scripts/chat_cli.py`: a terminal chat that prints each tool call in grey.
-- [ ] 2.7 Guardrails: if a tool errors, the bot apologises and offers alternatives. If the request is off-topic, it gives a polite redirect.
+- [x] 2.7 Guardrails: if a tool errors, the bot apologises and offers alternatives. If the request is off-topic, it gives a polite redirect.
 
 ### Automated tests
 - [x] `tests/unit/test_timeparse.py`: **at least 30 parametrised phrases** with a fixed "now".
@@ -270,7 +270,7 @@ def test_parse(text, expected):
 ```
 
 - [x] `tests/unit/test_tools.py`: each tool validates its input (bad date, unknown service, bad phone) and returns a JSON-serialisable result.
-- [ ] `tests/integration/test_agent_flow.py`: uses a `FakeLLM` that returns scripted tool calls. Checks that:
+- [x] `tests/integration/test_agent_flow.py`: uses a `FakeLLM` that returns scripted tool calls. Checks that:
   - the booking flow ends with exactly one `Appointment` in the DB;
   - when a tool raises `SlotTakenError`, the agent's next message offers other slots;
   - the loop stops after 4 tool rounds (no infinite loop).
