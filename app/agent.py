@@ -57,7 +57,7 @@ class SarvamLLMClient:
         *,
         model: str = "sarvam-105b",
         base_url: str = "https://api.sarvam.ai/v2",
-        timeout: float = 30.0,
+        timeout: float = 60.0,
     ) -> None:
         self._api_key = api_key
         self._model = model

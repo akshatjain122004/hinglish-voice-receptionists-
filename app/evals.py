@@ -123,14 +123,17 @@ def _fresh_engine():
 
 
 async def run_case(case: dict, llm: LLMClient, *, now: datetime | None = None) -> EvalResult:
+    """Runs one golden case. A runtime error (timeout, provider outage, ...)
+    fails only this case instead of aborting the whole batch — a transient
+    hiccup on case 5 of 22 shouldn't throw away the other 21 results."""
     now = now or datetime.now(IST)
     original_engine = db_module.engine
     db_module.engine = _fresh_engine()
+    tool_calls: list[dict] = []
+    tool_results: list[dict] = []
+    replies: list[str] = []
     try:
         agent = Agent(llm, now=now, caller_phone=EVAL_CALLER_PHONE)
-        tool_calls: list[dict] = []
-        tool_results: list[dict] = []
-        replies: list[str] = []
 
         def record(name: str, arguments: dict, result: dict) -> None:
             tool_calls.append({"tool": name, "args": arguments})
@@ -139,6 +142,13 @@ async def run_case(case: dict, llm: LLMClient, *, now: datetime | None = None) -
         for turn in case["turns"]:
             reply = await agent.handle_turn(case["id"], turn, on_tool_call=record)
             replies.append(reply)
+    except Exception as exc:  # noqa: BLE001 - one flaky case must not abort the whole batch
+        return EvalResult(
+            id=case["id"],
+            category=case["category"],
+            passed=False,
+            reasons=[f"runtime error: {type(exc).__name__}: {exc}"],
+        )
     finally:
         db_module.engine = original_engine
 

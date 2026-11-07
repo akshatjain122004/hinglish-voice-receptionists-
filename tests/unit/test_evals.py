@@ -1,3 +1,6 @@
+import pytest
+
+from app.agent import LLMResponse
 from app.evals import (
     EvalResult,
     check_must_mention,
@@ -6,6 +9,7 @@ from app.evals import (
     count_sentences,
     load_golden_cases,
     render_report,
+    run_all,
 )
 
 
@@ -106,6 +110,45 @@ class TestCheckNoHallucination:
         replies = ["Kaunsa service chahiye?"]
         tool_results_blob = "{}"
         assert check_no_hallucination(replies, tool_results_blob) is True
+
+
+class _FlakyLLM:
+    """Raises once (simulating a transient network error), then answers."""
+
+    def __init__(self) -> None:
+        self.call_count = 0
+
+    async def chat(self, messages, tools):
+        self.call_count += 1
+        if self.call_count == 1:
+            raise RuntimeError("boom")
+        return LLMResponse(content="Theek hai.")
+
+
+class TestRunAllSurvivesAFlakyCase:
+    @pytest.mark.asyncio
+    async def test_a_runtime_error_in_one_case_fails_only_that_case(self):
+        cases = [
+            {
+                "id": "flaky",
+                "category": "x",
+                "turns": ["hi"],
+                "expected": {"tool_calls": [], "max_sentences": 2},
+            },
+            {
+                "id": "fine",
+                "category": "x",
+                "turns": ["hi"],
+                "expected": {"tool_calls": [], "max_sentences": 2},
+            },
+        ]
+
+        results = await run_all(cases, _FlakyLLM())
+
+        assert [r.id for r in results] == ["flaky", "fine"]
+        assert results[0].passed is False
+        assert "boom" in results[0].reasons[0]
+        assert results[1].passed is True
 
 
 class TestRenderReport:
