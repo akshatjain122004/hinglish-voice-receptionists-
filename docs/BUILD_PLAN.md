@@ -23,8 +23,8 @@
 
 | Phase | Name | Status |
 |---|---|---|
-| 0 | Project setup & scope | ⬜ Not started |
-| 1 | Booking engine (no AI) | ⬜ Not started |
+| 0 | Project setup & scope | 🟨 In progress |
+| 1 | Booking engine (no AI) | ✅ Complete |
 | 2 | Text agent "brain" | ⬜ Not started |
 | 3 | FAQ RAG | ⬜ Not started |
 | 4 | Voice in the browser | ⬜ Not started |
@@ -117,19 +117,19 @@ asyncio_mode = "auto"
 **Time:** 1–2 days · **Cost:** ₹0
 
 ### Tasks
-- [ ] 0.1 Create the GitHub repo `hinglish-receptionist` with a `README.md`, `.gitignore` (Python) and MIT `LICENSE`.
-- [ ] 0.2 Create the folder structure above (empty files are fine).
-- [ ] 0.3 Create a virtualenv on Python 3.11 and add dependencies: `pipecat-ai[sarvam,silero,webrtc]`, `fastapi`, `uvicorn`, `sqlmodel`, `chromadb`, `httpx`, `pyyaml`, `python-dotenv`, `pydantic-settings`, `pytest`, `pytest-asyncio`, `ruff`.
-- [ ] 0.4 Create accounts: Sarvam AI (API key), Google Cloud (enable the Calendar API), Meta for Developers (WhatsApp app), Twilio (trial).
-- [ ] 0.5 Write `.env.example` with every key name (no values) and `app/config.py`, which loads them with `pydantic-settings`.
-- [ ] 0.6 Write `data/clinic.yaml`: clinic name, address, working hours, lunch break, weekly off day, services with durations (cleaning 30 min, consultation 15 min, filling 45 min) and slot granularity (15 min).
-- [ ] 0.7 Write `data/faqs.md` with **at least 15 Q&As** (fees, timings, parking, payment modes, insurance, location, emergency, kids, etc.).
-- [ ] 0.8 Write `data/test_calls.yaml` with **at least 20 golden conversations** in Hinglish, Hindi and English. Include: normal booking, no slot available, FAQ, reschedule, cancel, caller changes language mid-call, unclear request, off-topic question, and the caller asking for a human.
-- [ ] 0.9 Add `ruff` and a GitHub Actions workflow that runs `ruff check` and `pytest` on every push.
+- [x] 0.1 Create the GitHub repo `hinglish-receptionist` with a `README.md`, `.gitignore` (Python) and MIT `LICENSE`.
+- [x] 0.2 Create the folder structure above (empty files are fine).
+- [x] 0.3 Create a virtualenv on Python 3.11 and add dependencies: `pipecat-ai[sarvam,silero,webrtc]`, `fastapi`, `uvicorn`, `sqlmodel`, `chromadb`, `httpx`, `pyyaml`, `python-dotenv`, `pydantic-settings`, `pytest`, `pytest-asyncio`, `ruff`.
+- [ ] 0.4 Create accounts: Sarvam AI (API key) ✅, Google Cloud (Calendar API enabled, service account created, calendar shared, `.env` configured) ✅, Twilio (trial account + SID/Auth Token in `.env`; buying a number deferred to Phase 8 since it needs a paid upgrade) ✅, Meta for Developers (WhatsApp app) 🟨 in progress.
+- [x] 0.5 Write `.env.example` with every key name (no values) and `app/config.py`, which loads them with `pydantic-settings`.
+- [x] 0.6 Write `data/clinic.yaml`: clinic name, address, working hours, lunch break, weekly off day, services with durations (cleaning 30 min, consultation 15 min, filling 45 min) and slot granularity (15 min).
+- [x] 0.7 Write `data/faqs.md` with **at least 15 Q&As** (fees, timings, parking, payment modes, insurance, location, emergency, kids, etc.).
+- [x] 0.8 Write `data/test_calls.yaml` with **at least 20 golden conversations** in Hinglish, Hindi and English. Include: normal booking, no slot available, FAQ, reschedule, cancel, caller changes language mid-call, unclear request, off-topic question, and the caller asking for a human.
+- [x] 0.9 Add `ruff` and a GitHub Actions workflow that runs `ruff check` and `pytest` on every push.
 
 ### Automated tests
-- [ ] `tests/unit/test_config.py`: config loads from a temp `.env`; a missing required key raises an error.
-- [ ] `tests/unit/test_data_files.py`: `clinic.yaml` parses and has the required keys; `faqs.md` has ≥ 15 questions; `test_calls.yaml` has ≥ 20 cases, each with `id`, `turns` and `expected`.
+- [x] `tests/unit/test_config.py`: config loads from a temp `.env`; a missing required key raises an error.
+- [x] `tests/unit/test_data_files.py`: `clinic.yaml` parses and has the required keys; `faqs.md` has ≥ 15 questions; `test_calls.yaml` has ≥ 20 cases, each with `id`, `turns` and `expected`.
 
 ```python
 # tests/unit/test_data_files.py
@@ -153,12 +153,12 @@ def test_golden_calls_well_formed():
 ```
 
 ### Manual checks
-- [ ] `pytest` runs green locally.
+- [x] `pytest` runs green locally.
 - [ ] The GitHub Actions run is green.
 - [ ] Each API key works with one hello-world call (Sarvam TTS speaks one sentence to an `.wav` file).
 
 ### ✅ Phase complete when
-The repo builds in CI, all data files exist and are validated, and every account key has been smoke-tested.
+The repo builds in CI, all data files exist and are validated, and every account key has been smoke-tested. **Not yet complete** — pending: Google Cloud + Twilio accounts, Meta WhatsApp app (in progress), CI run verification, and the Sarvam TTS smoke test.
 
 ---
 
@@ -168,16 +168,16 @@ The repo builds in CI, all data files exist and are validated, and every account
 **Time:** 3–4 days · **Cost:** ₹0
 
 ### Tasks
-- [ ] 1.1 `app/db.py`: SQLModel tables `Appointment(id, patient_name, phone, service, start, end, status, created_at)` and `CallLog(id, caller, started_at, ended_at, transcript, outcome)`.
-- [ ] 1.2 `booking.get_free_slots(date, service, part_of_day=None)`: respects working hours, lunch break, weekly off, service duration and existing bookings. Returns a sorted list of start times.
-- [ ] 1.3 `booking.book(phone, name, service, start)`: re-checks availability inside a transaction and raises `SlotTakenError` if the slot was taken in between.
-- [ ] 1.4 `booking.cancel(appointment_id | phone)` and `booking.reschedule(appointment_id, new_start)`.
-- [ ] 1.5 `booking.find_by_phone(phone)`: returns upcoming appointments.
-- [ ] 1.6 Phone number normalisation: `98290 12345`, `+91-9829012345` and `09829012345` all become `+919829012345`.
-- [ ] 1.7 Reject bookings in the past and more than 30 days ahead (configurable).
+- [x] 1.1 `app/db.py`: SQLModel tables `Appointment(id, patient_name, phone, service, start, end, status, created_at)` and `CallLog(id, caller, started_at, ended_at, transcript, outcome)`.
+- [x] 1.2 `booking.get_free_slots(date, service, part_of_day=None)`: respects working hours, lunch break, weekly off, service duration and existing bookings. Returns a sorted list of start times.
+- [x] 1.3 `booking.book(phone, name, service, start)`: re-checks availability inside a transaction and raises `SlotTakenError` if the slot was taken in between.
+- [x] 1.4 `booking.cancel(appointment_id | phone)` and `booking.reschedule(appointment_id, new_start)`.
+- [x] 1.5 `booking.find_by_phone(phone)`: returns upcoming appointments.
+- [x] 1.6 Phone number normalisation: `98290 12345`, `+91-9829012345` and `09829012345` all become `+919829012345`.
+- [x] 1.7 Reject bookings in the past and more than 30 days ahead (configurable).
 
 ### Automated tests
-- [ ] `tests/unit/test_booking.py`, with at least these cases:
+- [x] `tests/unit/test_booking.py`, with at least these cases:
 
 | # | Case | Expected |
 |---|---|---|
@@ -193,7 +193,7 @@ The repo builds in CI, all data files exist and are validated, and every account
 | 10 | Reschedule to a taken slot | Raises, original kept |
 | 11 | `part_of_day="evening"` | Only slots between 16:00 and 20:00 |
 
-- [ ] `tests/unit/test_phone.py`: all formats normalise to E.164; garbage input raises an error.
+- [x] `tests/unit/test_phone.py`: all formats normalise to E.164; garbage input raises an error.
 
 ```python
 # tests/unit/test_booking.py (excerpt)
@@ -215,10 +215,10 @@ def test_evening_filter(db):
 (Use a `db` fixture in `tests/conftest.py` that creates an in-memory SQLite database for each test.)
 
 ### Manual checks
-- [ ] Run `python -m app.booking --demo` to print tomorrow's free slots, then book one and print again. The booked slot disappears.
+- [x] Run `python -m app.booking --demo` to print tomorrow's free slots, then book one and print again. The booked slot disappears.
 
 ### ✅ Phase complete when
-All 11+ booking cases and the phone tests pass, and test coverage of `booking.py` is at least 90% (`pytest --cov=app.booking`).
+All 11+ booking cases and the phone tests pass, and test coverage of `booking.py` is at least 90% (`pytest --cov=app.booking`). **Done** — 32 tests passing, 94% coverage on `app/booking.py`.
 
 ---
 
