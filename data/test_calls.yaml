@@ -1,0 +1,345 @@
+# Golden Hinglish test conversations for the eval suite (Phase 2+).
+# Placeholder cases for development against the placeholder clinic in
+# clinic.yaml / faqs.md. Add real pilot cases during Phase 10 (see
+# docs/BUILD_PLAN.md "Don't change test_calls.yaml expectations just to
+# make a failing eval pass" rule in CLAUDE.md).
+#
+# Schema:
+#   id: unique string
+#   category: booking | no_slot | faq | reschedule | cancel |
+#             language_switch | unclear | off_topic | human_handoff
+#   language: hinglish | hindi | english
+#   turns: ordered list of caller utterances (one session)
+#   expected:
+#     tool_calls: ordered list of {tool, args} the agent should call
+#                 (args are the minimum fields that must match; omit a
+#                 field the eval shouldn't check)
+#     max_sentences: max sentences per bot reply
+#     must_mention: phrases/values that must appear in the final reply
+#       if the booking succeeds (e.g. the confirmed time)
+#     must_not_hallucinate: true means every time/price/slot spoken must
+#       come from a tool result, never invented
+
+- id: booking_001
+  category: booking
+  language: hinglish
+  turns:
+    - "Hello, kal shaam ko cleaning ka slot milega?"
+    - "Saade paanch theek hai."
+    - "Ravi"
+    - "Haan, confirm kar do."
+  expected:
+    tool_calls:
+      - tool: check_slots
+        args: { service: cleaning, part_of_day: evening }
+      - tool: book_appointment
+        args: { service: cleaning }
+    max_sentences: 2
+    must_not_hallucinate: true
+
+- id: booking_002
+  category: booking
+  language: english
+  turns:
+    - "Hi, I want to book a consultation for tomorrow morning."
+    - "10 am works."
+    - "My name is Priya, confirm it please."
+  expected:
+    tool_calls:
+      - tool: check_slots
+        args: { service: consultation, part_of_day: morning }
+      - tool: book_appointment
+        args: { service: consultation }
+    max_sentences: 2
+    must_not_hallucinate: true
+
+- id: booking_003
+  category: booking
+  language: hindi
+  turns:
+    - "Namaste, mujhe parso dopahar root canal ke liye appointment chahiye."
+    - "Jo bhi pehla slot ho, wahi theek hai."
+    - "Mera naam Suresh hai, book kar do."
+  expected:
+    tool_calls:
+      - tool: check_slots
+        args: { service: root_canal, part_of_day: afternoon }
+      - tool: book_appointment
+        args: { service: root_canal }
+    max_sentences: 2
+    must_not_hallucinate: true
+
+- id: booking_004
+  category: booking
+  language: hinglish
+  turns:
+    - "Filling karani hai aaj shaam ko, slot hai kya?"
+    - "6 baje wala le lete hain."
+    - "Naam Aman hai."
+    - "Haan confirm."
+  expected:
+    tool_calls:
+      - tool: check_slots
+        args: { service: filling, part_of_day: evening }
+      - tool: book_appointment
+        args: { service: filling }
+    max_sentences: 2
+    must_not_hallucinate: true
+
+- id: booking_005
+  category: booking
+  language: hinglish
+  turns:
+    - "Teeth whitening ke liye kal ka time mil sakta hai?"
+    - "Subah 11 baje theek rahega."
+    - "Naam Neha, confirm kar do please."
+  expected:
+    tool_calls:
+      - tool: check_slots
+        args: { service: whitening, part_of_day: morning }
+      - tool: book_appointment
+        args: { service: whitening }
+    max_sentences: 2
+    must_not_hallucinate: true
+
+- id: no_slot_001
+  category: no_slot
+  language: hinglish
+  turns:
+    - "5:15 pe cleaning book kar do."
+  expected:
+    tool_calls:
+      - tool: check_slots
+        args: { service: cleaning }
+    max_sentences: 2
+    must_not_hallucinate: true
+    notes: "5:15 is not a real free slot in the fixture data; bot must refuse and offer only real alternatives."
+
+- id: no_slot_002
+  category: no_slot
+  language: english
+  turns:
+    - "Can I get a root canal appointment on Sunday?"
+  expected:
+    tool_calls:
+      - tool: check_slots
+        args: { service: root_canal }
+    max_sentences: 2
+    must_not_hallucinate: true
+    notes: "Sunday is the weekly off day; check_slots should return no slots."
+
+- id: faq_001
+  category: faq
+  language: hinglish
+  turns:
+    - "Cleaning ki fees kitni hai?"
+  expected:
+    tool_calls:
+      - tool: answer_faq
+        args: { question: "cleaning fees" }
+    max_sentences: 2
+    must_mention: ["500"]
+    must_not_hallucinate: true
+
+- id: faq_002
+  category: faq
+  language: english
+  turns:
+    - "What time does the clinic open?"
+  expected:
+    tool_calls:
+      - tool: answer_faq
+        args: { question: "clinic opening time" }
+    max_sentences: 2
+    must_mention: ["10"]
+    must_not_hallucinate: true
+
+- id: faq_003
+  category: faq
+  language: hinglish
+  turns:
+    - "Parking ki facility hai kya clinic mein?"
+  expected:
+    tool_calls:
+      - tool: answer_faq
+        args: { question: "parking" }
+    max_sentences: 2
+    must_not_hallucinate: true
+
+- id: faq_004
+  category: faq
+  language: hindi
+  turns:
+    - "Aap log insurance accept karte ho kya?"
+  expected:
+    tool_calls:
+      - tool: answer_faq
+        args: { question: "insurance" }
+    max_sentences: 2
+    must_not_hallucinate: true
+
+- id: faq_005
+  category: faq
+  language: hinglish
+  turns:
+    - "Bachon ka treatment karte ho aap?"
+  expected:
+    tool_calls:
+      - tool: answer_faq
+        args: { question: "pediatric dental care" }
+    max_sentences: 2
+    must_not_hallucinate: true
+
+- id: faq_out_of_scope_001
+  category: faq
+  language: english
+  turns:
+    - "Do you also do MRI scans here?"
+  expected:
+    tool_calls:
+      - tool: answer_faq
+        args: { question: "MRI scan" }
+    max_sentences: 2
+    must_mention: ["staff", "confirm"]
+    notes: "Not in faqs.md; bot should say it will confirm with staff, not guess."
+
+- id: reschedule_001
+  category: reschedule
+  language: hinglish
+  turns:
+    - "Mera appointment reschedule karna hai, mera number +919829012345 hai."
+    - "Kal ke jagah parso kar do, shaam ko."
+  expected:
+    tool_calls:
+      - tool: reschedule_appointment
+        args: {}
+    max_sentences: 2
+    must_not_hallucinate: true
+
+- id: reschedule_002
+  category: reschedule
+  language: english
+  turns:
+    - "I need to move my appointment to a later time, same day."
+    - "7 pm instead please."
+  expected:
+    tool_calls:
+      - tool: reschedule_appointment
+        args: {}
+    max_sentences: 2
+    must_not_hallucinate: true
+
+- id: cancel_001
+  category: cancel
+  language: hinglish
+  turns:
+    - "Mujhe apna appointment cancel karna hai."
+    - "Haan, cancel kar do."
+  expected:
+    tool_calls:
+      - tool: cancel_appointment
+        args: {}
+    max_sentences: 2
+
+- id: cancel_002
+  category: cancel
+  language: english
+  turns:
+    - "Please cancel my booking for tomorrow."
+  expected:
+    tool_calls:
+      - tool: cancel_appointment
+        args: {}
+    max_sentences: 2
+
+- id: language_switch_001
+  category: language_switch
+  language: hinglish
+  turns:
+    - "Hi, I want to book cleaning for tomorrow evening."
+    - "Haan, saade paanch theek hai, naam Ravi hai."
+    - "Confirm kar do please."
+  expected:
+    tool_calls:
+      - tool: check_slots
+        args: { service: cleaning, part_of_day: evening }
+      - tool: book_appointment
+        args: { service: cleaning }
+    max_sentences: 2
+    notes: "Caller starts in English, switches to Hinglish mid-call; bot should follow and reply in the caller's current language each turn."
+
+- id: language_switch_002
+  category: language_switch
+  language: hindi
+  turns:
+    - "Namaste, mujhe consultation chahiye kal subah."
+    - "Actually let's do 11 am, that works better."
+  expected:
+    tool_calls:
+      - tool: check_slots
+        args: { service: consultation, part_of_day: morning }
+    max_sentences: 2
+
+- id: unclear_001
+  category: unclear
+  language: hinglish
+  turns:
+    - "Haan woh... kuch chahiye tha mujhe... pata nahi."
+  expected:
+    tool_calls: []
+    max_sentences: 2
+    must_mention: ["booking", "appointment"]
+    notes: "Bot should ask a clarifying question rather than guess a tool call."
+
+- id: unclear_002
+  category: unclear
+  language: english
+  turns:
+    - "Umm I don't know, maybe something about teeth?"
+  expected:
+    tool_calls: []
+    max_sentences: 2
+    notes: "Bot should ask one clarifying question (which service / what date) instead of assuming."
+
+- id: off_topic_001
+  category: off_topic
+  language: hinglish
+  turns:
+    - "Aaj cricket match mein kaun jeeta?"
+  expected:
+    tool_calls: []
+    max_sentences: 2
+    must_mention: ["appointment", "clinic"]
+    notes: "Bot should politely redirect to clinic-related help."
+
+- id: off_topic_002
+  category: off_topic
+  language: english
+  turns:
+    - "Can you tell me a joke?"
+  expected:
+    tool_calls: []
+    max_sentences: 2
+    notes: "Polite redirect back to clinic services."
+
+- id: human_handoff_001
+  category: human_handoff
+  language: hinglish
+  turns:
+    - "Mujhe insaan se baat karni hai, bot se nahi."
+  expected:
+    tool_calls:
+      - tool: transfer_to_human
+        args: {}
+    max_sentences: 2
+
+- id: human_handoff_002
+  category: human_handoff
+  language: english
+  turns:
+    - "This isn't working, can I speak to a real person please?"
+  expected:
+    tool_calls:
+      - tool: transfer_to_human
+        args: {}
+    max_sentences: 2

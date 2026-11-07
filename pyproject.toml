@@ -1,0 +1,45 @@
+[project]
+name = "hinglish-receptionist"
+version = "0.1.0"
+description = "Hinglish voice receptionist for small Indian businesses"
+requires-python = ">=3.11,<3.12"
+readme = "README.md"
+license = { text = "MIT" }
+dependencies = [
+    "pipecat-ai[sarvam,silero,webrtc]",
+    "fastapi",
+    "uvicorn[standard]",
+    "sqlmodel",
+    "chromadb",
+    "httpx",
+    "pyyaml",
+    "python-dotenv",
+    "pydantic-settings",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",
+    "respx",
+    "ruff",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["live: calls real paid APIs (deselected by default)"]
+addopts = "-m 'not live' -q"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*", "dashboard*"]

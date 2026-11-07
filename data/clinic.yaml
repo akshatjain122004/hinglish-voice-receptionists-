@@ -1,0 +1,39 @@
+# Placeholder clinic data for development. Replace with the real pilot
+# clinic's details before going live (see docs/BUILD_PLAN.md Phase 10).
+
+name: "Mehta Dental Clinic"
+address: "12 Sukhadia Circle, Udaipur, Rajasthan 313001"
+timezone: "Asia/Kolkata"
+phone: "+919829000000"
+emergency_phone: "+919829000001"
+
+hours:
+  open: "10:00"
+  close: "20:00"
+
+lunch_break:
+  start: "14:00"
+  end: "15:00"
+
+weekly_off: "Sunday"
+
+slot_minutes: 15
+
+services:
+  consultation:
+    duration_minutes: 15
+    price_inr: 200
+  cleaning:
+    duration_minutes: 30
+    price_inr: 500
+  filling:
+    duration_minutes: 45
+    price_inr: 1500
+  root_canal:
+    duration_minutes: 60
+    price_inr: 4000
+  whitening:
+    duration_minutes: 45
+    price_inr: 3000
+
+booking_window_days: 30
