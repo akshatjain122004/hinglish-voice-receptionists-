@@ -5,6 +5,11 @@ from app.config import Settings
 
 
 def test_config_loads_from_env_file(tmp_path, monkeypatch):
+    # Real process env vars take priority over an _env_file in pydantic-settings,
+    # so clear any ambient values (e.g. set by CI) to test .env loading in isolation.
+    monkeypatch.delenv("SARVAM_API_KEY", raising=False)
+    monkeypatch.delenv("DAILY_BUDGET_INR", raising=False)
+
     env_file = tmp_path / ".env"
     env_file.write_text("SARVAM_API_KEY=test-key\nDAILY_BUDGET_INR=75\n")
     monkeypatch.chdir(tmp_path)
