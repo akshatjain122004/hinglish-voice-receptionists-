@@ -30,6 +30,14 @@ TEST_CALLS_PATH = Path(__file__).resolve().parent.parent / "data" / "test_calls.
 # a phone number themselves, since a real caller never has to.
 EVAL_CALLER_PHONE = "9999999999"
 
+# A fixed reference "now" (a Monday), not the real wall-clock date. Golden
+# cases use relative day words ("kal", "parso"); if `now` tracked the real
+# date, "tomorrow" could land on the clinic's weekly off day depending on
+# which day you happen to run the suite, failing bookings for reasons that
+# have nothing to do with the agent. Same anchor the rest of the test suite
+# uses (see tests/unit/test_timeparse.py and friends).
+EVAL_NOW = datetime(2026, 11, 9, 9, 0, tzinfo=IST)
+
 
 def load_golden_cases(path: Path = TEST_CALLS_PATH) -> list[dict]:
     return yaml.safe_load(path.read_text())
@@ -126,7 +134,7 @@ async def run_case(case: dict, llm: LLMClient, *, now: datetime | None = None) -
     """Runs one golden case. A runtime error (timeout, provider outage, ...)
     fails only this case instead of aborting the whole batch — a transient
     hiccup on case 5 of 22 shouldn't throw away the other 21 results."""
-    now = now or datetime.now(IST)
+    now = now or EVAL_NOW
     original_engine = db_module.engine
     db_module.engine = _fresh_engine()
     tool_calls: list[dict] = []

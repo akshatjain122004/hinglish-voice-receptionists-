@@ -1,7 +1,9 @@
 import pytest
 
+from app import booking
 from app.agent import LLMResponse
 from app.evals import (
+    EVAL_NOW,
     EvalResult,
     check_must_mention,
     check_no_hallucination,
@@ -11,6 +13,18 @@ from app.evals import (
     render_report,
     run_all,
 )
+
+
+class TestEvalNow:
+    def test_eval_now_does_not_fall_on_the_clinic_weekly_off_day(self):
+        """Golden cases use relative day words (kal/parso); if the eval's
+        reference `now` depended on the real wall-clock date, "tomorrow"
+        could land on the clinic's weekly off day depending on which day
+        you happen to run the suite, making slots legitimately empty and
+        failing bookings for reasons that have nothing to do with the
+        agent. A fixed anchor makes the suite deterministic."""
+        clinic = booking._load_clinic()
+        assert booking.WEEKDAYS[EVAL_NOW.weekday()] != clinic["weekly_off"]
 
 
 class TestLoadGoldenCases:
