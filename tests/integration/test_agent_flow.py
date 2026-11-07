@@ -129,3 +129,36 @@ async def test_stops_after_max_tool_rounds_without_an_infinite_loop(db):
 
     assert reply == FALLBACK_MESSAGE
     assert len(fake.calls) == 4
+
+
+@pytest.mark.asyncio
+async def test_on_tool_call_hook_receives_name_arguments_and_result(db):
+    fake = FakeLLM(
+        responses=[
+            LLMResponse(
+                content=None,
+                tool_calls=[
+                    ToolCall(
+                        id="1",
+                        name="check_slots",
+                        arguments={"date": "kal", "service": "cleaning"},
+                    )
+                ],
+            ),
+            LLMResponse(content="Kal yeh slots free hain."),
+        ]
+    )
+    agent = Agent(fake, now=NOW)
+    seen: list[tuple[str, dict, dict]] = []
+
+    await agent.handle_turn(
+        "call-4",
+        "kal slot hai?",
+        on_tool_call=lambda name, arguments, result: seen.append((name, arguments, result)),
+    )
+
+    assert len(seen) == 1
+    name, arguments, result = seen[0]
+    assert name == "check_slots"
+    assert arguments == {"date": "kal", "service": "cleaning"}
+    assert result["ok"] is True

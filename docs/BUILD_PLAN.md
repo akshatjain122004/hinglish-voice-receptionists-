@@ -246,7 +246,7 @@ All 11+ booking cases and the phone tests pass, and test coverage of `booking.py
   - write numbers and times in a way that can be spoken.
 - [x] 2.4 `app/agent.py`: the tool-calling loop. Send the message, run any tool calls, feed the results back, and repeat (maximum 4 tool rounds per turn). Keep the conversation history per session.
 - [x] 2.5 The LLM client sits behind an interface (`LLMClient.chat(messages, tools)`) so tests can plug in a `FakeLLM`.
-- [ ] 2.6 `scripts/chat_cli.py`: a terminal chat that prints each tool call in grey.
+- [x] 2.6 `scripts/chat_cli.py`: a terminal chat that prints each tool call in grey.
 - [x] 2.7 Guardrails: if a tool errors, the bot apologises and offers alternatives. If the request is off-topic, it gives a polite redirect.
 
 ### Automated tests
@@ -274,7 +274,7 @@ def test_parse(text, expected):
   - the booking flow ends with exactly one `Appointment` in the DB;
   - when a tool raises `SlotTakenError`, the agent's next message offers other slots;
   - the loop stops after 4 tool rounds (no infinite loop).
-- [ ] **Evals** `tests/evals/` + `scripts/run_evals.py` (`live`): run every golden case from `test_calls.yaml` against the real LLM. Each case checks:
+- [x] **Evals** `tests/evals/` + `scripts/run_evals.py` (`live`): run every golden case from `test_calls.yaml` against the real LLM. Each case checks:
   - the correct tool was called with the correct arguments;
   - no hallucinated slot (every time spoken appears in the tool output);
   - the reply language matches the caller's language;
@@ -282,12 +282,19 @@ def test_parse(text, expected):
 
   The script prints a pass-rate table and saves it to `reports/evals_phase2.md`.
 
+  Grading logic (`app/evals.py`) is unit-tested offline (`tests/unit/test_evals.py`); the live run
+  against the real LLM (`tests/evals/test_run_evals.py`, `scripts/run_evals.py`) has not been
+  executed yet — it costs a little and wasn't run per CLAUDE.md's "don't run live evals unless
+  asked" rule. There is also no language-match checker yet (reply language vs. caller language);
+  everything else above is implemented. Run `python scripts/run_evals.py` when ready to get the
+  real pass rate and fill in the Phase complete gate below.
+
 ### Manual checks
 - [ ] Book, cancel and reschedule through `chat_cli.py` in pure Hindi, pure English and Hinglish.
 - [ ] Try to trick it: "5:15 book kar do" when 5:15 isn't free. It must refuse and offer real slots.
 
 ### ✅ Phase complete when
-Unit and integration tests pass, `timeparse` covers ≥ 30 phrases, and **the eval pass rate is ≥ 85%, with 0 hallucinated slots**.
+Unit and integration tests pass, `timeparse` covers ≥ 30 phrases, and **the eval pass rate is ≥ 85%, with 0 hallucinated slots**. **Code complete** — all tasks implemented, offline suite green (timeparse covers 40+ phrases). Still open: run `pytest -m live` eval suite / `scripts/run_evals.py` against the real Sarvam LLM and record the pass rate, and do the manual CLI checks (book/cancel/reschedule in Hindi/English/Hinglish, and the "5:15 book kar do" trick) — both deferred since they're live/manual and cost a little, per CLAUDE.md.
 
 ---
 
