@@ -162,3 +162,36 @@ async def test_on_tool_call_hook_receives_name_arguments_and_result(db):
     assert name == "check_slots"
     assert arguments == {"date": "kal", "service": "cleaning"}
     assert result["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_assistant_tool_call_history_matches_openai_schema(db):
+    """Sarvam's OpenAI-compatible API rejects a malformed `tool_calls` entry
+    on the *next* request. FakeLLM doesn't validate this, so this test
+    inspects the message history directly instead of relying on FakeLLM to
+    reject a bad shape."""
+    fake = FakeLLM(
+        responses=[
+            LLMResponse(
+                content=None,
+                tool_calls=[
+                    ToolCall(
+                        id="call_1", name="check_slots", arguments={"date": "kal", "service": "cleaning"}
+                    )
+                ],
+            ),
+            LLMResponse(content="Kal yeh slots free hain."),
+        ]
+    )
+    agent = Agent(fake, now=NOW)
+
+    await agent.handle_turn("call-5", "kal slot hai?")
+
+    second_call_messages = fake.calls[1]["messages"]
+    assistant_message = next(m for m in second_call_messages if m["role"] == "assistant")
+    tool_call = assistant_message["tool_calls"][0]
+
+    assert tool_call["id"] == "call_1"
+    assert tool_call["type"] == "function"
+    assert tool_call["function"]["name"] == "check_slots"
+    assert tool_call["function"]["arguments"] == '{"date": "kal", "service": "cleaning"}'
