@@ -14,9 +14,10 @@ from datetime import datetime
 from typing import Any, Protocol
 
 import httpx
+from loguru import logger
 
 from app import prompts, tools
-from app.llm_streaming import ChatDelta, ToolCallAccumulator
+from app.llm_streaming import ChatDelta, ToolCallAccumulator, ToolCallDelta
 
 MAX_TOOL_ROUNDS = 4
 
@@ -65,33 +66,62 @@ class SarvamLLMClient:
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
 
-    async def chat(
+    async def stream_chat(
         self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
-    ) -> LLMResponse:
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
-            response = await client.post(
+    ) -> AsyncIterator[ChatDelta]:
+        async with (
+            httpx.AsyncClient(timeout=self._timeout) as client,
+            client.stream(
+                "POST",
                 f"{self._base_url}/chat/completions",
                 headers={
                     "Authorization": f"Bearer {self._api_key}",
                     "api-subscription-key": self._api_key,
                 },
-                json={"model": self._model, "messages": messages, "tools": tools},
-            )
+                json={
+                    "model": self._model,
+                    "messages": messages,
+                    "tools": tools,
+                    "stream": True,
+                },
+            ) as response,
+        ):
             response.raise_for_status()
-            return self._parse(response.json())
+            async for line in response.aiter_lines():
+                delta = self._parse_sse_line(line)
+                if delta is not None:
+                    yield delta
 
     @staticmethod
-    def _parse(data: dict[str, Any]) -> LLMResponse:
-        message = data["choices"][0]["message"]
-        tool_calls = [
-            ToolCall(
-                id=call["id"],
-                name=call["function"]["name"],
-                arguments=json.loads(call["function"]["arguments"]),
+    def _parse_sse_line(line: str) -> ChatDelta | None:
+        if not line.startswith("data: "):
+            return None
+        payload = line[len("data: ") :].strip()
+        if payload == "[DONE]":
+            return None
+        try:
+            chunk = json.loads(payload)
+        except json.JSONDecodeError:
+            logger.debug(f"Skipping malformed SSE line from Sarvam: {line!r}")
+            return None
+
+        choices = chunk.get("choices") or []
+        if not choices:
+            # Sarvam's documented stream_options.include_usage trailer chunk
+            # has an empty choices array - nothing to extract from it.
+            return None
+
+        delta_obj = choices[0].get("delta") or {}
+        tool_call_deltas = [
+            ToolCallDelta(
+                index=tc["index"],
+                id=tc.get("id"),
+                name=(tc.get("function") or {}).get("name"),
+                arguments_fragment=(tc.get("function") or {}).get("arguments") or "",
             )
-            for call in message.get("tool_calls") or []
+            for tc in delta_obj.get("tool_calls") or []
         ]
-        return LLMResponse(content=message.get("content"), tool_calls=tool_calls)
+        return ChatDelta(content=delta_obj.get("content"), tool_call_deltas=tool_call_deltas)
 
 
 class Agent:
