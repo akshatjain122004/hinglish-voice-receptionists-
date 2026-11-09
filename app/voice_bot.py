@@ -16,6 +16,7 @@ tests/integration/test_voice_text_equivalence.py).
 
 from __future__ import annotations
 
+import hashlib
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -51,12 +52,31 @@ from pipecat.workers.runner import WorkerRunner
 from app.agent import Agent, SarvamLLMClient
 from app.config import get_settings
 from app.db import CallLog, get_session
-from app.metrics import TurnTracker
+from app.metrics import TurnTracker, ensure_file_sink
 
 OnToolCall = Callable[[str, dict[str, Any], dict[str, Any]], None]
 OnTurn = Callable[[str, str], None]
 
 CLINIC_PATH = Path(__file__).resolve().parent.parent / "data" / "clinic.yaml"
+
+
+def placeholder_caller_phone(session_id: str) -> str:
+    """A valid-shaped but fake caller phone, deterministic per session.
+
+    A browser WebRTC call has no real phone number (that arrives with
+    Twilio in Phase 8), but `Agent` still needs *some* `caller_phone` —
+    `book_appointment`/`cancel_appointment`/`reschedule_appointment` all
+    require one (see `app.tools.PHONE_INJECTED_TOOLS`); without it, every
+    one of those calls raises `TypeError: missing 1 required keyword-only
+    argument: 'phone'`, which the agent retries until it exhausts its tool
+    rounds and falls back to a generic error. Derived from the session id
+    (not random) so two concurrent browser testers get different phones —
+    `booking.py` keys cancel/reschedule by phone, so sharing one fixed
+    placeholder would let one tester's session see another's appointment.
+    """
+    digest = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
+    digits = str(int(digest[:12], 16))[-10:].zfill(10)
+    return f"+91{digits}"
 
 
 @dataclass
@@ -230,8 +250,17 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
     the receptionist persona already baked into `app/prompts.py` (e.g.
     "...WhatsApp kar dungi") — see `docs/architecture.md` for both choices.
     """
+    # Lazy, not at module/script startup: pipecat.runner.run.main() resets
+    # logging (logger.remove() + its own stderr sink) after that code runs,
+    # which would silently wipe a sink added any earlier (see
+    # app.metrics.configure_file_sink's docstring).
+    ensure_file_sink()
+
     settings = get_settings()
-    agent = Agent(SarvamLLMClient(settings.sarvam_api_key))
+    agent = Agent(
+        SarvamLLMClient(settings.sarvam_api_key),
+        caller_phone=placeholder_caller_phone(runner_args.session_id),
+    )
     call_logger = CallLogger(caller=runner_args.session_id)
     call_logger.start()
     turn_tracker = TurnTracker()

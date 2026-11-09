@@ -27,7 +27,7 @@
 | 1 | Booking engine (no AI) | ✅ Complete |
 | 2 | Text agent "brain" | 🟨 Code complete, gate not formally met — see note below; moved on by explicit user decision |
 | 3 | FAQ RAG | 🟨 Code complete, gate not formally met — see note below; moved on by explicit user decision |
-| 4 | Voice in the browser | 🟨 All tasks (4.1-4.7) code complete; gate not yet met — no completed voice booking, STT sample test or latency report yet |
+| 4 | Voice in the browser | 🟨 All tasks + both manual checks done (5 real bookings, latency measured); gate not formally met — STT sample test not started |
 | 5 | Hinglish + latency hardening | ⬜ Not started |
 | 6 | WhatsApp confirmations & reminders | ⬜ Not started |
 | 7 | Google Calendar sync | ⬜ Not started |
@@ -571,11 +571,58 @@ consistent with the over-30s-budget note already flagged at Phase 3
 close-out (not a new regression from this task).
 
 ### Manual checks
-- [ ] Complete 5 full bookings by voice in the browser.
-- [ ] Run `scripts/latency_report.py` over those sessions and record p50 and p95 latency in `reports/latency_phase4.md`.
+- [x] Complete 5 full bookings by voice in the browser.
+- [x] Run `scripts/latency_report.py` over those sessions and record p50 and p95 latency in `reports/latency_phase4.md`.
+
+**2026-11-09, continued from the "ran it live" note above:** that first attempt's `transfer_to_human`
+instead of a booking turned out to have a second, bigger cause than the VAD fragmentation already
+documented — found and fixed two real bugs while chasing it:
+
+- **Turn-metrics were never reaching disk.** `scripts/run_voice_bot.py` called
+  `app.metrics.configure_file_sink()` before `pipecat.runner.run.main()`, but `main()` itself calls
+  `logger.remove()` at server startup (wiping every sink, including that one) before adding its own
+  stderr sink — so turn JSON kept printing to the console but silently never landed in the log file.
+  Fixed with a new `ensure_file_sink()`, called lazily from inside `app.voice_bot.run_bot` (the
+  per-call entry point, which only ever runs after that startup reset), guarded so repeat calls in
+  one process don't add duplicate sinks.
+- **Every voice booking was silently failing.** `run_bot()` constructed `Agent(SarvamLLMClient(...))`
+  with no `caller_phone` at all — exactly the gap this project's phone-as-channel-identity pattern
+  warns about for Phase 4 ("no real caller ID"). Without it, `book_appointment` (which requires
+  `phone`, no default) raised `TypeError` on every attempt; the agent retried across its 4 tool
+  rounds and fell back to the generic error message — which is exactly what both early transcripts
+  showed, even after the caller clearly said "yes"/"हाँ कर दो". Fixed with
+  `placeholder_caller_phone(session_id)`: deterministic per session (not a fixed shared constant),
+  so concurrent browser testers' bookings don't collide — `booking.py` keys cancel/reschedule by
+  phone.
+
+Also found, while verifying: `latency_summary()` could get physically-impossible negative stage
+durations from `TurnTracker`'s known overlapping-turns limitation (a caller's next utterance, or a
+multi-sentence reply's next TTS clip, arriving before the previous turn's marks finish) — fixed to
+drop and count them (`dropped` column) rather than let them skew p50/p95.
+
+After both fixes: **5 real confirmed voice bookings** (Aryan/consultation, Abhinav/consultation,
+Akhilesh/cleaning, Akshat/whitening, Heeral/root_canal), verified directly against the SQLite DB.
+Latency measured over that clean session (`reports/latency_phase4.md`, 28 completed turns, 3
+negative readings dropped):
+
+| stage | n | p50 (ms) | p95 (ms) |
+|---|---|---|---|
+| stt_latency_ms | 25 | 162 | 4825 |
+| llm_latency_ms | 20 | 2587 | 5620 |
+| tts_latency_ms | 24 | 1366 | 1836 |
+| total_latency_ms | 28 | 3192 | 9267 |
+
+No target yet (per the gate below) — Phase 5 is where these get optimised. p95 total (~9.3s) is far
+above the eventual phone target (≤3s) but `llm_first_token`/`tts_first_audio` aren't true streaming
+marks yet (documented limitation from 4.7) and `TurnTracker`'s overlapping-turns issue likely still
+inflates some readings beyond what the `dropped` filter catches — both are Phase 5 territory.
 
 ### ✅ Phase complete when
 You can book by voice end to end, the STT sample test passes at ≥ 8/10, and the latency numbers are measured and recorded (no target yet; you optimise in Phase 5).
+
+**Status: booking-by-voice and latency measurement are done; the STT sample test
+(`tests/evals/test_stt_samples.py`, 10 recorded `.wav` files) has not been started.** Not blocking
+further work by itself, but the gate isn't formally complete until it's done or explicitly deferred.
 
 ---
 

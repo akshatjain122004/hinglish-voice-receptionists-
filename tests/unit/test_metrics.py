@@ -1,8 +1,20 @@
 import json
 
 import pytest
+from loguru import logger
 
-from app.metrics import TurnTimer, turn_log_line
+from app import metrics
+from app.metrics import (
+    TurnTimer,
+    configure_file_sink,
+    ensure_file_sink,
+    latency_summary,
+    load_turns,
+    log_turn,
+    percentile,
+    render_latency_report,
+    turn_log_line,
+)
 
 
 def test_durations_ms_computes_all_four_stages():
@@ -44,3 +56,180 @@ def test_turn_log_line_is_valid_json_with_timestamps_durations_and_extra_fields(
     assert data["llm_first_token"] == 101.0
     assert data["tts_first_audio"] == 101.5
     assert data["total_latency_ms"] == pytest.approx(1500.0)
+
+
+class TestPercentile:
+    def test_single_value(self):
+        assert percentile([42.0], 50) == 42.0
+
+    def test_p50_of_an_odd_length_list(self):
+        assert percentile([10.0, 20.0, 30.0], 50) == 20.0
+
+    def test_p95_of_a_larger_list(self):
+        values = [float(i) for i in range(1, 101)]  # 1..100
+        assert percentile(values, 95) == 95.0
+
+    def test_empty_list_raises(self):
+        with pytest.raises(ValueError):
+            percentile([], 50)
+
+
+class TestLoadTurns:
+    def test_parses_valid_turn_lines(self, tmp_path):
+        log_path = tmp_path / "turns.jsonl"
+        log_path.write_text(
+            '{"total_latency_ms": 1200.0, "session_id": "a"}\n'
+            '{"total_latency_ms": 1500.0, "session_id": "b"}\n',
+            encoding="utf-8",
+        )
+
+        turns = load_turns(log_path)
+
+        assert len(turns) == 2
+        assert turns[0]["session_id"] == "a"
+
+    def test_skips_non_json_lines(self, tmp_path):
+        """Other app log lines (e.g. "Caller connected") share the same file
+        sink as turn metrics — only valid JSON turn records should count."""
+        log_path = tmp_path / "turns.jsonl"
+        log_path.write_text(
+            'Caller connected\n{"total_latency_ms": 1200.0}\nCaller disconnected\n',
+            encoding="utf-8",
+        )
+
+        turns = load_turns(log_path)
+
+        assert len(turns) == 1
+
+    def test_skips_json_lines_without_total_latency_ms(self, tmp_path):
+        """A turn that never reached TTS (e.g. a tool error) still logs
+        partial timestamps — it shouldn't be counted as a completed turn."""
+        log_path = tmp_path / "turns.jsonl"
+        log_path.write_text(
+            '{"speech_end": 100.0}\n{"total_latency_ms": 900.0}\n',
+            encoding="utf-8",
+        )
+
+        turns = load_turns(log_path)
+
+        assert len(turns) == 1
+
+
+class TestLatencySummary:
+    def test_computes_p50_and_p95_per_stage(self):
+        turns = [
+            {"stt_latency_ms": 100.0, "total_latency_ms": 1000.0},
+            {"stt_latency_ms": 200.0, "total_latency_ms": 2000.0},
+            {"stt_latency_ms": 300.0, "total_latency_ms": 3000.0},
+        ]
+
+        summary = latency_summary(turns)
+
+        assert summary["stt_latency_ms"]["p50"] == 200.0
+        assert summary["stt_latency_ms"]["n"] == 3
+        assert summary["total_latency_ms"]["p50"] == 2000.0
+
+    def test_omits_a_stage_absent_from_every_turn(self):
+        turns = [{"total_latency_ms": 1000.0}]
+
+        summary = latency_summary(turns)
+
+        assert "tts_latency_ms" not in summary
+
+    def test_empty_turns_is_an_empty_summary(self):
+        assert latency_summary([]) == {}
+
+    def test_negative_duration_is_dropped_not_counted(self):
+        """A negative duration is physically impossible — a symptom of
+        TurnTracker's known overlapping-turns limitation (see
+        docs/BUILD_PLAN.md phase 4 notes), not a real measurement. It must
+        not skew the percentiles of the turns that *are* legitimate."""
+        turns = [
+            {"llm_latency_ms": 100.0, "total_latency_ms": 1000.0},
+            {"llm_latency_ms": -60.0, "total_latency_ms": 1000.0},
+            {"llm_latency_ms": 200.0, "total_latency_ms": 1000.0},
+        ]
+
+        summary = latency_summary(turns)
+
+        assert summary["llm_latency_ms"]["n"] == 2
+        assert summary["llm_latency_ms"]["dropped"] == 1
+        assert summary["llm_latency_ms"]["p50"] == 100.0
+
+    def test_dropped_is_zero_when_nothing_is_negative(self):
+        summary = latency_summary([{"total_latency_ms": 1000.0}])
+
+        assert summary["total_latency_ms"]["dropped"] == 0
+
+    def test_all_negative_omits_the_stage_entirely(self):
+        summary = latency_summary([{"llm_latency_ms": -10.0}])
+
+        assert "llm_latency_ms" not in summary
+
+
+class TestConfigureFileSink:
+    def test_logged_turns_are_persisted_as_parseable_jsonl(self, tmp_path):
+        log_path = tmp_path / "nested" / "turns.jsonl"
+        other_sink = tmp_path / "other.log"
+        other_sink_id = logger.add(other_sink)  # proves cleanup is scoped, not logger.remove(None)
+        sink_id = configure_file_sink(log_path)
+        assert isinstance(sink_id, int)
+        try:
+            timer = TurnTimer(
+                speech_end=1.0, stt_final=1.2, llm_first_token=1.5, tts_first_audio=1.8
+            )
+            log_turn(timer, session_id="call-1")
+        finally:
+            logger.remove(sink_id)
+
+        logger.info("after cleanup")
+        logger.remove(other_sink_id)
+
+        turns = load_turns(log_path)
+        assert len(turns) == 1
+        assert turns[0]["session_id"] == "call-1"
+        assert "after cleanup" in other_sink.read_text(encoding="utf-8")
+
+
+class TestEnsureFileSink:
+    def test_second_call_does_not_duplicate_the_sink(self, tmp_path, monkeypatch):
+        """Regression test: pipecat's dev runner (`pipecat.runner.run.main`)
+        calls `logger.remove()` at server startup, wiping any sink added
+        before it — so the real sink has to be added lazily, from inside
+        the per-call entry point (`app.voice_bot.run_bot`), guarded so N
+        calls in one process don't add N duplicate sinks (which would log
+        every turn N times)."""
+        monkeypatch.setattr(metrics, "_file_sink_configured", False)
+        log_path = tmp_path / "turns.jsonl"
+
+        ensure_file_sink(log_path)
+        ensure_file_sink(log_path)
+        timer = TurnTimer(speech_end=1.0, stt_final=1.1, llm_first_token=1.3, tts_first_audio=1.5)
+        log_turn(timer, session_id="x")
+
+        turns = load_turns(log_path)
+        assert len(turns) == 1
+
+
+class TestRenderLatencyReport:
+    def test_includes_stage_names_and_percentiles(self):
+        summary = {"total_latency_ms": {"p50": 1200.0, "p95": 2500.0, "n": 5, "dropped": 0}}
+
+        report = render_latency_report(summary)
+
+        assert "total_latency_ms" in report
+        assert "1200" in report
+        assert "2500" in report
+
+    def test_includes_dropped_count(self):
+        summary = {"llm_latency_ms": {"p50": 100.0, "p95": 200.0, "n": 2, "dropped": 1}}
+
+        report = render_latency_report(summary)
+
+        row = next(line for line in report.splitlines() if "llm_latency_ms" in line)
+        assert row == "| llm_latency_ms | 2 | 100 | 200 | 1 |"
+
+    def test_title_can_be_overridden(self):
+        report = render_latency_report({}, title="Phase 4 latency report")
+
+        assert report.startswith("# Phase 4 latency report")

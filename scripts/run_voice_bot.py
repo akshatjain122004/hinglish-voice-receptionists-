@@ -5,6 +5,10 @@ Usage:
 
 Opens a local server with Pipecat's prebuilt WebRTC client at
 http://localhost:7860 — allow mic access and start talking.
+
+Turn-latency metrics (see app.metrics) are logged lazily from inside
+app.voice_bot.run_bot on the first call, not here: pipecat.runner.run.main()
+resets logging at startup, which would wipe a sink added before it runs.
 """
 
 from __future__ import annotations

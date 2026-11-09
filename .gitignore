@@ -15,9 +15,10 @@ build/
 .coverage
 htmlcov/
 
-# keep generated report markdown tracked; drop disposable audio artifacts
+# keep generated report markdown tracked; drop disposable audio/raw-log artifacts
 reports/*.wav
 reports/*.mp3
+reports/*.jsonl
 
 *.db
 *.sqlite

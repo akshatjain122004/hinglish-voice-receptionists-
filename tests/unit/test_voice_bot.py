@@ -2,8 +2,9 @@ from datetime import UTC, datetime
 
 from sqlmodel import select
 
+from app import booking
 from app import db as db_module
-from app.voice_bot import CallLogger
+from app.voice_bot import CallLogger, placeholder_caller_phone
 
 
 def test_call_logger_start_creates_a_call_log_row(db):
@@ -54,3 +55,23 @@ def test_record_turn_before_start_raises():
         assert False, "expected a RuntimeError"
     except RuntimeError:
         pass
+
+
+class TestPlaceholderCallerPhone:
+    """A browser WebRTC call has no real phone number yet (that arrives
+    with Twilio in Phase 8) — Agent still needs *some* caller_phone, since
+    book_appointment/cancel_appointment/reschedule_appointment all require
+    one (see app.tools.PHONE_INJECTED_TOOLS)."""
+
+    def test_is_a_validly_shaped_e164_number(self):
+        phone = placeholder_caller_phone("some-webrtc-session-id")
+
+        assert booking.normalize_phone(phone) == phone
+
+    def test_is_deterministic_for_the_same_session_id(self):
+        assert placeholder_caller_phone("abc") == placeholder_caller_phone("abc")
+
+    def test_differs_across_sessions(self):
+        """Keeps concurrent browser testers' bookings from colliding on one
+        shared phone number (booking.py keys cancel/reschedule by phone)."""
+        assert placeholder_caller_phone("session-a") != placeholder_caller_phone("session-b")
