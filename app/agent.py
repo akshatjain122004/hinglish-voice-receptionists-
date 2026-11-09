@@ -69,6 +69,7 @@ class SarvamLLMClient:
     async def stream_chat(
         self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
     ) -> AsyncIterator[ChatDelta]:
+        yielded_any = False
         async with (
             httpx.AsyncClient(timeout=self._timeout) as client,
             client.stream(
@@ -90,13 +91,16 @@ class SarvamLLMClient:
             async for line in response.aiter_lines():
                 delta = self._parse_sse_line(line)
                 if delta is not None:
+                    yielded_any = True
                     yield delta
+        if not yielded_any:
+            logger.warning("Sarvam stream_chat() yielded no deltas for this request")
 
     @staticmethod
     def _parse_sse_line(line: str) -> ChatDelta | None:
-        if not line.startswith("data: "):
+        if not line.startswith("data:"):
             return None
-        payload = line[len("data: ") :].strip()
+        payload = line[len("data:") :].strip()
         if payload == "[DONE]":
             return None
         try:

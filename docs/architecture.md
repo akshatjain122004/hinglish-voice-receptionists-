@@ -60,6 +60,8 @@ Design choices and discoveries worth remembering, added as phases progress.
   complete response), not streaming, so "first token" and "first audio byte" both land at "the whole
   thing is ready." The measurement plumbing exists now so Phase 5's streaming work (task 5.1) can
   slot in without changing `TurnTimer`'s shape — only when each mark actually happens.
+  **Superseded by Phase 5.1** (below): `SarvamLLMClient.chat()` no longer exists — `stream_chat()`
+  replaced it, and `llm_first_token` now marks on the first real streamed chunk.
 
 ## Phase 5
 
@@ -86,8 +88,14 @@ Design choices and discoveries worth remembering, added as phases progress.
   fragmented streaming tool-call deltas (id/name once, `arguments` as many small
   string fragments, all keyed by index) into finished tool calls. Everything else
   reuses existing machinery: `Agent.handle_turn()` forwards content deltas live via a
-  new `on_reply_chunk` callback (gated off the moment a tool-call delta appears in that
-  round, so nothing speculative ever reaches TTS), and pipecat's `TTSService` already
+  new `on_reply_chunk` callback, gated off the moment a tool-call delta appears in that
+  round — suppression starts at that point, but doesn't retroactively un-speak content
+  already forwarded earlier in the same round. If a round ever mixes spoken content
+  with a *trailing* tool-call delta (not standard OpenAI-API behavior, and not
+  something Sarvam's docs suggest happens), those already-forwarded sentences would
+  reach TTS before the tool-call detour — a documented, accepted limitation (see
+  `docs/superpowers/specs/2026-11-09-voice-streaming-design.md`'s "Open limitation"
+  section), not something this design engineers around. And pipecat's `TTSService` already
   buffers incoming text into sentences before synthesizing
   (`TextAggregationMode.SENTENCE`, its existing default) — it only needed to actually
   *receive* text incrementally, which it now does.

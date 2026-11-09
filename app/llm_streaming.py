@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass
@@ -37,11 +38,18 @@ class ChatDelta:
 
 @dataclass
 class FinishedToolCall:
-    """A tool call once all of its streamed fragments have been merged."""
+    """A tool call once all of its streamed fragments have been merged.
+
+    Duplicates `app.agent.ToolCall`'s shape on purpose rather than returning that
+    type directly: this module stays free of app-internal imports (as well as the
+    "no HTTP, no pipecat imports" goal in the module docstring above), so the caller
+    (`Agent.handle_turn()`) converts a `FinishedToolCall` into its own `ToolCall` one
+    field at a time instead.
+    """
 
     id: str
     name: str
-    arguments: dict
+    arguments: dict[str, Any]
 
 
 class ToolCallAccumulator:

@@ -3,6 +3,7 @@ produces exactly the tool calls the Phase 2 text agent (`Agent.handle_turn`)
 produces for the same input — the voice pipeline must reuse that loop, not
 reimplement tool-calling inside Pipecat."""
 
+from collections.abc import AsyncIterator
 from datetime import datetime
 
 import pytest
@@ -134,6 +135,41 @@ async def test_voice_frame_pushes_one_text_frame_per_reply_chunk():
     text_frames = [f for f in down_frames if isinstance(f, TextFrame)]
     assert [f.text for f in text_frames] == ["Kal saade paanch ", "baje free hai."]
     assert "".join(f.text for f in text_frames) == expected_reply
+
+
+@pytest.mark.asyncio
+async def test_handle_turn_exception_mid_stream_falls_back_and_closes_turn():
+    """Finding #1 (final-review): if `Agent.handle_turn()` raises partway through a
+    streamed reply (Sarvam's HTTP call is known-flaky, e.g. `httpx.ReadTimeout` — see
+    `_FlakyLLM` in tests/fixtures), `AgentProcessor` must still push
+    `LLMFullResponseEndFrame` (so pipecat's TTS turn context closes and no leftover
+    partial sentence bleeds into the next turn) and must still speak something: the
+    content already streamed before the failure, followed by `FALLBACK_MESSAGE`."""
+
+    class _FlakyMidStreamLLM:
+        async def stream_chat(
+            self, messages: list[dict], tools: list[dict]
+        ) -> AsyncIterator[ChatDelta]:
+            yield ChatDelta(content="Kal saade paanch ")
+            raise RuntimeError("boom")
+
+    agent = Agent(_FlakyMidStreamLLM(), now=NOW)
+    processor = AgentProcessor(agent, session_id="voice-call")
+
+    down_frames, _ = await run_test(
+        processor,
+        frames_to_send=[
+            TranscriptionFrame(
+                text="kal slot hai?", user_id="caller", timestamp="2026-11-09T10:00:00Z"
+            )
+        ],
+    )
+
+    text_frames = [f for f in down_frames if isinstance(f, TextFrame)]
+    assert [f.text for f in text_frames] == ["Kal saade paanch ", FALLBACK_MESSAGE]
+
+    end_frames = [f for f in down_frames if isinstance(f, LLMFullResponseEndFrame)]
+    assert len(end_frames) == 1
 
 
 @pytest.mark.asyncio

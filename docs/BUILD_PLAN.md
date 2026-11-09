@@ -28,7 +28,7 @@
 | 2 | Text agent "brain" | 🟨 Code complete, gate not formally met — see note below; moved on by explicit user decision |
 | 3 | FAQ RAG | 🟨 Code complete, gate not formally met — see note below; moved on by explicit user decision |
 | 4 | Voice in the browser | 🟨 All tasks + both manual checks done (5 real bookings, latency measured); gate not formally met — STT sample test harness built, 10 real recordings (human voice) still needed |
-| 5 | Hinglish + latency hardening | ⬜ Not started |
+| 5 | Hinglish + latency hardening | 🟨 In progress — tasks 5.1 and 5.5 done; rest not started |
 | 6 | WhatsApp confirmations & reminders | ⬜ Not started |
 | 7 | Google Calendar sync | ⬜ Not started |
 | 8 | Real phone calls | ⬜ Not started |

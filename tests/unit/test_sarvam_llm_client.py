@@ -130,6 +130,51 @@ async def test_stream_chat_skips_malformed_sse_line_without_raising():
 
 @pytest.mark.asyncio
 @respx.mock
+async def test_stream_chat_parses_data_line_without_space_after_colon():
+    """Finding #2 (final-review): Sarvam's documented prefix is `data: ` (with a
+    space), but `_parse_sse_line` must not silently drop the whole stream if the
+    real wire format ever omits it - that degrades to total, unexplained silence
+    for the caller with no error anywhere."""
+    body = (
+        "data:"
+        + json.dumps({"choices": [{"delta": {"content": "Namaste"}}]})
+        + "\n\n"
+        + "data:[DONE]\n\n"
+    )
+    respx.post("https://api.sarvam.ai/v2/chat/completions").mock(
+        return_value=httpx.Response(200, text=body)
+    )
+    client = SarvamLLMClient(api_key="fake-key")
+
+    deltas = [
+        d async for d in client.stream_chat(messages=[{"role": "user", "content": "hi"}], tools=[])
+    ]
+
+    assert deltas == [ChatDelta(content="Namaste")]
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_stream_chat_yields_nothing_without_raising_when_every_line_is_unparseable():
+    """Finding #2 (final-review): a fully-empty/malformed stream must degrade to
+    zero deltas, not an exception - the caller (Agent.handle_turn) is expected to
+    turn zero deltas into an empty reply, and the warning log (not asserted here,
+    just the behavior) is what makes that case visible instead of silent."""
+    body = "not even an sse line\n\n: a comment line, not data\n\n"
+    respx.post("https://api.sarvam.ai/v2/chat/completions").mock(
+        return_value=httpx.Response(200, text=body)
+    )
+    client = SarvamLLMClient(api_key="fake-key")
+
+    deltas = [
+        d async for d in client.stream_chat(messages=[{"role": "user", "content": "hi"}], tools=[])
+    ]
+
+    assert deltas == []
+
+
+@pytest.mark.asyncio
+@respx.mock
 async def test_stream_chat_sends_stream_true_and_auth_headers():
     route = respx.post("https://api.sarvam.ai/v2/chat/completions").mock(
         return_value=httpx.Response(

@@ -50,7 +50,7 @@ from pipecat.services.sarvam.tts import SarvamHttpTTSService
 from pipecat.transports.base_transport import BaseTransport, TransportParams
 from pipecat.workers.runner import WorkerRunner
 
-from app.agent import Agent, SarvamLLMClient
+from app.agent import FALLBACK_MESSAGE, Agent, SarvamLLMClient
 from app.config import get_settings
 from app.db import CallLog, get_session
 from app.metrics import TurnTracker, ensure_file_sink
@@ -168,6 +168,15 @@ class AgentProcessor(FrameProcessor):
 
             await self.push_frame(LLMFullResponseStartFrame(), direction)
 
+            # Turn-scoped: tracks whether any content chunk was streamed for *this*
+            # turn. This is a different scope from the tool-call suppression gate
+            # inside Agent.handle_turn() (saw_tool_call_delta), which is round-scoped
+            # (reset every tool-calling round within a turn). Known gap this doesn't
+            # fix: a turn that streams some preamble content in an early round and
+            # then exhausts max_tool_rounds in a later round (hitting FALLBACK_MESSAGE
+            # via the *normal* return path, not an exception) still won't have the
+            # fallback message pushed here, since first_chunk_seen is already True -
+            # same gap as before this change, only the exception case below is fixed.
             first_chunk_seen = False
 
             async def on_reply_chunk(chunk: str) -> None:
@@ -177,18 +186,29 @@ class AgentProcessor(FrameProcessor):
                 first_chunk_seen = True
                 await self.push_frame(TextFrame(chunk), direction)
 
-            reply = await self.agent.handle_turn(
-                self.session_id,
-                frame.text,
-                on_tool_call=self.on_tool_call,
-                on_reply_chunk=on_reply_chunk,
-            )
+            turn_failed = False
+            try:
+                reply = await self.agent.handle_turn(
+                    self.session_id,
+                    frame.text,
+                    on_tool_call=self.on_tool_call,
+                    on_reply_chunk=on_reply_chunk,
+                )
+            except Exception:  # noqa: BLE001 - Sarvam's HTTP call is known-flaky
+                # (httpx.ReadTimeout etc.); any exception here must still close out
+                # the turn with a fallback, not propagate and leave TTS's turn
+                # context open for the next caller turn.
+                logger.exception("Agent.handle_turn failed mid-stream; falling back")
+                reply = FALLBACK_MESSAGE
+                turn_failed = True
 
-            if not first_chunk_seen:
+            if not first_chunk_seen or turn_failed:
                 # handle_turn() can return a reply (e.g. FALLBACK_MESSAGE, after
                 # hitting max_tool_rounds) without ever streaming content through
                 # on_reply_chunk - push it now so the caller still hears something.
-                if self.turn_tracker is not None:
+                # Also pushed when handle_turn() raised mid-stream (turn_failed),
+                # even if some chunks were already streamed before the failure.
+                if self.turn_tracker is not None and not first_chunk_seen:
                     self.turn_tracker.mark_llm_first_token(time.time())
                 await self.push_frame(TextFrame(reply), direction)
 
