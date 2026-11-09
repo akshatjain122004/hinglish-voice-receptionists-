@@ -165,18 +165,35 @@ class AgentProcessor(FrameProcessor):
         if isinstance(frame, TranscriptionFrame) and frame.text.strip():
             if self.turn_tracker is not None:
                 self.turn_tracker.mark_stt_final(time.time())
+
+            await self.push_frame(LLMFullResponseStartFrame(), direction)
+
+            first_chunk_seen = False
+
+            async def on_reply_chunk(chunk: str) -> None:
+                nonlocal first_chunk_seen
+                if self.turn_tracker is not None and not first_chunk_seen:
+                    self.turn_tracker.mark_llm_first_token(time.time())
+                first_chunk_seen = True
+                await self.push_frame(TextFrame(chunk), direction)
+
             reply = await self.agent.handle_turn(
-                self.session_id, frame.text, on_tool_call=self.on_tool_call
+                self.session_id,
+                frame.text,
+                on_tool_call=self.on_tool_call,
+                on_reply_chunk=on_reply_chunk,
             )
-            if self.turn_tracker is not None:
-                # Not literally the first streamed token - Agent/SarvamLLMClient
-                # don't stream yet (that's Phase 5's job), so this is when the
-                # full reply became available.
-                self.turn_tracker.mark_llm_first_token(time.time())
+
+            if not first_chunk_seen and reply:
+                # handle_turn() can return a reply (e.g. FALLBACK_MESSAGE, after
+                # hitting max_tool_rounds) without ever streaming content through
+                # on_reply_chunk - push it now so the caller still hears something.
+                if self.turn_tracker is not None:
+                    self.turn_tracker.mark_llm_first_token(time.time())
+                await self.push_frame(TextFrame(reply), direction)
+
             if self.on_turn is not None:
                 self.on_turn(frame.text, reply)
-            await self.push_frame(LLMFullResponseStartFrame(), direction)
-            await self.push_frame(TextFrame(reply), direction)
             await self.push_frame(LLMFullResponseEndFrame(), direction)
             return
 

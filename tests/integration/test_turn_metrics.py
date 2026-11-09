@@ -15,6 +15,7 @@ from pipecat.tests.utils import run_test
 
 from app.agent import Agent, LLMResponse
 from app.booking import IST
+from app.llm_streaming import ChatDelta
 from app.metrics import TurnTracker
 from app.voice_bot import AgentProcessor, TTSLatencyMarker
 from tests.fixtures.fake_llm import FakeLLM
@@ -60,3 +61,33 @@ async def test_tts_latency_marker_marks_only_the_first_audio_frame_per_utterance
 
     first_mark = tracker.timer.tts_first_audio
     assert first_mark is not None
+
+
+@pytest.mark.asyncio
+async def test_llm_first_token_marked_only_once_across_multiple_chunks():
+    agent = Agent(
+        FakeLLM(responses=[[ChatDelta(content="Ek "), ChatDelta(content="pal.")]]), now=NOW
+    )
+    tracker = TurnTracker()
+    call_count = 0
+    original_mark = tracker.mark_llm_first_token
+
+    def counting_mark(now: float) -> None:
+        nonlocal call_count
+        call_count += 1
+        original_mark(now)
+
+    tracker.mark_llm_first_token = counting_mark
+    processor = AgentProcessor(agent, turn_tracker=tracker)
+
+    await run_test(
+        processor,
+        frames_to_send=[
+            TranscriptionFrame(
+                text="kal slot hai?", user_id="caller", timestamp="2026-11-09T10:00:00Z"
+            )
+        ],
+    )
+
+    assert call_count == 1
+    assert tracker.timer.llm_first_token is not None

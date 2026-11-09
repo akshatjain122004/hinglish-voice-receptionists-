@@ -14,8 +14,9 @@ from pipecat.frames.frames import (
 )
 from pipecat.tests.utils import run_test
 
-from app.agent import Agent, LLMResponse, ToolCall
+from app.agent import FALLBACK_MESSAGE, Agent, LLMResponse, ToolCall
 from app.booking import IST
+from app.llm_streaming import ChatDelta
 from app.voice_bot import AgentProcessor
 from tests.fixtures.fake_llm import FakeLLM
 
@@ -96,3 +97,75 @@ async def test_on_turn_hook_receives_user_text_and_reply():
     )
 
     assert seen_turns == [("Namaste", "Namaste!")]
+
+
+@pytest.mark.asyncio
+async def test_voice_frame_pushes_one_text_frame_per_reply_chunk():
+    expected_reply = await Agent(
+        FakeLLM(
+            responses=[
+                [ChatDelta(content="Kal saade paanch "), ChatDelta(content="baje free hai.")]
+            ]
+        ),
+        now=NOW,
+    ).handle_turn("text-call", "kal slot hai?")
+
+    processor = AgentProcessor(
+        Agent(
+            FakeLLM(
+                responses=[
+                    [ChatDelta(content="Kal saade paanch "), ChatDelta(content="baje free hai.")]
+                ]
+            ),
+            now=NOW,
+        ),
+        session_id="voice-call",
+    )
+
+    down_frames, _ = await run_test(
+        processor,
+        frames_to_send=[
+            TranscriptionFrame(
+                text="kal slot hai?", user_id="caller", timestamp="2026-11-09T10:00:00Z"
+            )
+        ],
+    )
+
+    text_frames = [f for f in down_frames if isinstance(f, TextFrame)]
+    assert [f.text for f in text_frames] == ["Kal saade paanch ", "baje free hai."]
+    assert "".join(f.text for f in text_frames) == expected_reply
+
+
+@pytest.mark.asyncio
+async def test_fallback_message_is_still_spoken_when_max_tool_rounds_hit(db):
+    def endless_check_slots(call_id: str) -> LLMResponse:
+        return LLMResponse(
+            content=None,
+            tool_calls=[
+                ToolCall(
+                    id=call_id,
+                    name="check_slots",
+                    arguments={"date": "kal", "service": "cleaning"},
+                )
+            ],
+        )
+
+    agent = Agent(
+        FakeLLM(responses=[endless_check_slots(str(i)) for i in range(4)]),
+        now=NOW,
+        max_tool_rounds=4,
+    )
+    processor = AgentProcessor(agent, session_id="voice-call")
+
+    down_frames, _ = await run_test(
+        processor,
+        frames_to_send=[
+            TranscriptionFrame(
+                text="mujhe appointment chahiye", user_id="caller", timestamp="2026-11-09T10:00:00Z"
+            )
+        ],
+    )
+
+    text_frames = [f for f in down_frames if isinstance(f, TextFrame)]
+    assert len(text_frames) == 1
+    assert text_frames[0].text == FALLBACK_MESSAGE
