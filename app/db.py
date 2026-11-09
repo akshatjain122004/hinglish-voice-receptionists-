@@ -31,6 +31,13 @@ class CallLog(SQLModel, table=True):
     outcome: str = ""
 
 
+class UnansweredQuestion(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    question: str
+    caller_phone: str | None = None
+    asked_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
 def create_all(target_engine=None) -> None:
     SQLModel.metadata.create_all(target_engine or engine)
 

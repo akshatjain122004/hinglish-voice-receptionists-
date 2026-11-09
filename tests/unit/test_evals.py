@@ -126,6 +126,23 @@ class TestCheckMustMention:
             check_must_mention(["500"], "Cleaning ki fees paanch sau rupaye yani 500 hai.") is True
         )
 
+    def test_spoken_hindi_hundreds_match_the_digit_term(self):
+        """The system prompt requires spoken numbers, never digits (see
+        app/prompts.py) — "paanch sau" must satisfy a `must_mention: ["500"]`
+        check even though no digit appears anywhere in the reply."""
+        assert check_must_mention(["500"], "Cleaning ki fees paanch sau rupaye hai.") is True
+
+    def test_spoken_hindi_thousands_match_the_digit_term(self):
+        assert (
+            check_must_mention(["3000"], "Teeth whitening teen hazar rupaye mein hoti hai.") is True
+        )
+
+    def test_spoken_hindi_small_number_matches_the_digit_term(self):
+        assert check_must_mention(["10"], "Clinic subah das baje khulta hai.") is True
+
+    def test_wrong_spoken_number_still_fails(self):
+        assert check_must_mention(["500"], "Cleaning ki fees teen sau rupaye hai.") is False
+
 
 class TestCheckNoHallucination:
     def test_mentioned_number_present_in_tool_results_passes(self):
@@ -192,3 +209,11 @@ class TestRenderReport:
         report = render_report(results)
         assert "50" in report
         assert "a" in report and "b" in report
+
+    def test_title_is_not_pinned_to_a_specific_phase_by_default(self):
+        report = render_report([])
+        assert "phase 2" not in report.lower()
+
+    def test_title_can_be_overridden(self):
+        report = render_report([], title="Phase 3 eval report")
+        assert report.startswith("# Phase 3 eval report")

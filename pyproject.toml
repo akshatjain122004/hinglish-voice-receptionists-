@@ -11,6 +11,7 @@ dependencies = [
     "uvicorn[standard]",
     "sqlmodel",
     "chromadb",
+    "sentence-transformers",
     "httpx",
     "pyyaml",
     "python-dotenv",

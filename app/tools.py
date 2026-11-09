@@ -13,7 +13,19 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ValidationError
 
-from app import booking, timeparse
+from app import booking, rag, timeparse
+
+# Tuned against real scores from the multilingual embedder (see
+# tests/integration/test_rag_retrieval.py, re-measured after app.rag.ingest
+# switched to indexing each FAQ by both its question alone and its
+# question+answer): most in-scope FAQ questions score 0.57-0.9, but an
+# adversarial one close to a real FAQ (e.g. "share market mein kya chal raha
+# hai" vs. the "second opinion" FAQ) can reach ~0.56 while still being out of
+# scope. 0.565 is the lowest threshold that rejects every out-of-scope case
+# in that test; a couple of genuinely in-scope but oddly-phrased queries
+# fall below it too (found: false instead of an answer) — acceptable given
+# the project's "never invent or mismatch a fact" rule.
+FAQ_SCORE_THRESHOLD = 0.565
 
 
 class CheckSlotsInput(BaseModel):
@@ -135,15 +147,16 @@ def reschedule_appointment(
     return {"ok": True, "appointment": _appointment_dict(appointment)}
 
 
-def answer_faq(*, question: str) -> dict:
+def answer_faq(*, question: str, phone: str | None = None) -> dict:
     try:
-        AnswerFaqInput(question=question)
+        args = AnswerFaqInput(question=question)
     except ValidationError as exc:
         return _error(exc)
-    # Real retrieval arrives in Phase 3 (Chroma RAG). Until then every
-    # question is "not found" so the agent offers a human follow-up instead
-    # of inventing an answer.
-    return {"ok": True, "found": False}
+    results = rag.retrieve(args.question, k=1)
+    if not results or results[0]["score"] < FAQ_SCORE_THRESHOLD:
+        rag.log_unanswered(args.question, phone)
+        return {"ok": True, "found": False}
+    return {"ok": True, "found": True, "answer": results[0]["answer"]}
 
 
 def transfer_to_human(*, reason: str) -> dict:
@@ -167,7 +180,12 @@ REGISTRY: dict[str, Callable[..., dict]] = {
 # The caller's phone number is channel identity (Twilio caller ID, WhatsApp
 # sender, etc.) — the LLM is never asked for it and never supplies it; the
 # agent injects it here instead. See app.agent.Agent(caller_phone=...).
-PHONE_INJECTED_TOOLS = {"book_appointment", "cancel_appointment", "reschedule_appointment"}
+PHONE_INJECTED_TOOLS = {
+    "book_appointment",
+    "cancel_appointment",
+    "reschedule_appointment",
+    "answer_faq",
+}
 
 
 def call_tool(

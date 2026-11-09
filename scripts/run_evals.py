@@ -13,7 +13,8 @@ from app.agent import SarvamLLMClient
 from app.config import get_settings
 from app.evals import load_golden_cases, render_report, run_all
 
-REPORT_PATH = Path(__file__).resolve().parent.parent / "reports" / "evals_phase2.md"
+REPORT_PATH = Path(__file__).resolve().parent.parent / "reports" / "evals_phase3.md"
+REPORT_TITLE = "Phase 3 eval report"
 
 
 async def main() -> None:
@@ -22,7 +23,7 @@ async def main() -> None:
     cases = load_golden_cases()
 
     results = await run_all(cases, llm)
-    report = render_report(results)
+    report = render_report(results, title=REPORT_TITLE)
 
     REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
     REPORT_PATH.write_text(report)

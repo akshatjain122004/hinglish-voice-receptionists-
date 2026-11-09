@@ -2,7 +2,7 @@
 
 Guidance for Claude Code when working in this repository. Read this file and `docs/BUILD_PLAN.md` before making changes.
 
-**Current phase:** 3 — FAQ RAG *(see `docs/BUILD_PLAN.md` status board for the full list; bump this the moment a phase's status board row flips to ✅ Complete. Phase 2 was moved on from by explicit user decision with its gate not formally met — see the status board note on Phase 2 for why)*.
+**Current phase:** 4 — Voice in the browser *(see `docs/BUILD_PLAN.md` status board for the full list; bump this the moment a phase's status board row flips to ✅ Complete. Phases 2 and 3 were both moved on from by explicit user decision with their gates not formally met — see the status board notes on those phases for why. The user is tracking the overall eval pass rate at the end of every phase going forward to see whether later phases move it without extra work)*.
 
 ## What this project is
 

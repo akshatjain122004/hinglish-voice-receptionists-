@@ -33,3 +33,10 @@ def test_build_system_prompt_never_asks_for_the_phone_number():
 def test_build_system_prompt_requires_part_of_day_set_separately():
     prompt = build_system_prompt("Test Dental Clinic").lower()
     assert "part_of_day" in prompt
+
+
+def test_build_system_prompt_handles_faq_not_found():
+    prompt = build_system_prompt("Test Dental Clinic").lower()
+    assert "answer_faq" in prompt
+    assert "found" in prompt
+    assert "whatsapp" in prompt

@@ -44,6 +44,7 @@
     - "Hi, I want to book a consultation for tomorrow morning."
     - "10 am works."
     - "My name is Priya, confirm it please."
+    - "Yes, that's correct."
   expected:
     tool_calls:
       - tool: check_slots
@@ -60,6 +61,7 @@
     - "Namaste, mujhe parso dopahar root canal ke liye appointment chahiye."
     - "Jo bhi pehla slot ho, wahi theek hai."
     - "Mera naam Suresh hai, book kar do."
+    - "Haan, sahi hai."
   expected:
     tool_calls:
       - tool: check_slots
@@ -93,6 +95,7 @@
     - "Teeth whitening ke liye kal ka time mil sakta hai?"
     - "Subah 11 baje theek rahega."
     - "Naam Neha, confirm kar do please."
+    - "Haan, theek hai."
   expected:
     tool_calls:
       - tool: check_slots
@@ -106,7 +109,7 @@
   category: no_slot
   language: hinglish
   turns:
-    - "5:15 pe cleaning book kar do."
+    - "Kal 5:15 pe cleaning book kar do."
   expected:
     tool_calls:
       - tool: check_slots
@@ -188,6 +191,71 @@
       - tool: answer_faq
         args: { question: "pediatric dental care" }
     max_sentences: 2
+    must_not_hallucinate: true
+
+- id: faq_006
+  category: faq
+  language: english
+  turns:
+    - "What payment methods do you accept?"
+  expected:
+    tool_calls:
+      - tool: answer_faq
+        args: { question: "payment methods" }
+    max_sentences: 2
+    must_mention: ["UPI"]
+    must_not_hallucinate: true
+
+- id: faq_007
+  category: faq
+  language: hinglish
+  turns:
+    - "Teeth whitening ka charge kitna hai?"
+  expected:
+    tool_calls:
+      - tool: answer_faq
+        args: { question: "teeth whitening charge" }
+    max_sentences: 2
+    must_mention: ["3000"]
+    must_not_hallucinate: true
+
+- id: faq_008
+  category: faq
+  language: hindi
+  turns:
+    - "Kya clinic Sunday ko band rehta hai?"
+  expected:
+    tool_calls:
+      - tool: answer_faq
+        args: { question: "Sunday" }
+    max_sentences: 2
+    must_mention: ["Sunday"]
+    must_not_hallucinate: true
+
+- id: faq_009
+  category: faq
+  language: hinglish
+  turns:
+    - "X-ray ki facility hai kya yahan?"
+  expected:
+    tool_calls:
+      - tool: answer_faq
+        args: { question: "x-ray facility" }
+    max_sentences: 2
+    must_mention: ["ray"]
+    must_not_hallucinate: true
+
+- id: faq_010
+  category: faq
+  language: english
+  turns:
+    - "What are the doctor's qualifications?"
+  expected:
+    tool_calls:
+      - tool: answer_faq
+        args: { question: "doctor qualifications" }
+    max_sentences: 2
+    must_mention: ["BDS"]
     must_not_hallucinate: true
 
 - id: faq_out_of_scope_001

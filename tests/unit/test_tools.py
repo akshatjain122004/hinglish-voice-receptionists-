@@ -1,6 +1,9 @@
 from datetime import datetime, timedelta
 
+from sqlmodel import select
+
 from app import booking, tools
+from app import db as db_module
 from app.booking import IST, book, get_free_slots
 
 NOW = datetime(2026, 11, 9, 10, 0, tzinfo=IST)
@@ -104,9 +107,60 @@ class TestRescheduleAppointment:
 
 
 class TestAnswerFaq:
-    def test_stub_always_reports_not_found(self, db):
+    def test_found_when_top_match_scores_above_threshold(self, monkeypatch):
+        monkeypatch.setattr(
+            tools.rag,
+            "retrieve",
+            lambda question, k=1, **kw: [
+                {"question": "Cleaning ki fees kitni hai?", "answer": "500 rupaye.", "score": 0.84}
+            ],
+        )
         result = tools.answer_faq(question="fees kitni hai?")
+        assert result == {"ok": True, "found": True, "answer": "500 rupaye."}
+
+    def test_not_found_when_top_match_scores_below_threshold(self, db, monkeypatch):
+        monkeypatch.setattr(
+            tools.rag,
+            "retrieve",
+            lambda question, k=1, **kw: [
+                {
+                    "question": "Consultation ka charge kya hai?",
+                    "answer": "200 rupaye.",
+                    "score": 0.44,
+                }
+            ],
+        )
+        result = tools.answer_faq(question="cricket score kya hai?")
         assert result == {"ok": True, "found": False}
+
+    def test_not_found_when_collection_is_empty(self, db, monkeypatch):
+        monkeypatch.setattr(tools.rag, "retrieve", lambda question, k=1, **kw: [])
+        result = tools.answer_faq(question="anything")
+        assert result == {"ok": True, "found": False}
+
+    def test_logs_unanswered_question_when_not_found(self, db, monkeypatch):
+        monkeypatch.setattr(tools.rag, "retrieve", lambda question, k=1, **kw: [])
+        tools.answer_faq(question="cricket score kya hai?", phone="+919829012345")
+
+        with db_module.get_session() as session:
+            logged = session.exec(select(db_module.UnansweredQuestion)).all()
+        assert len(logged) == 1
+        assert logged[0].question == "cricket score kya hai?"
+        assert logged[0].caller_phone == "+919829012345"
+
+    def test_does_not_log_when_found(self, db, monkeypatch):
+        monkeypatch.setattr(
+            tools.rag,
+            "retrieve",
+            lambda question, k=1, **kw: [
+                {"question": "Cleaning ki fees kitni hai?", "answer": "500 rupaye.", "score": 0.84}
+            ],
+        )
+        tools.answer_faq(question="fees kitni hai?", phone="+919829012345")
+
+        with db_module.get_session() as session:
+            logged = session.exec(select(db_module.UnansweredQuestion)).all()
+        assert logged == []
 
 
 class TestTransferToHuman:

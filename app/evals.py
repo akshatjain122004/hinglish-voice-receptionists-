@@ -20,8 +20,12 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import create_engine
 
 from app import db as db_module
+from app import timeparse
 from app.agent import Agent, LLMClient
 from app.booking import IST
+
+_MULTIPLIER_WORDS = {"sau": 100, "hazar": 1000, "hazaar": 1000}
+_ALPHA_WORD = re.compile(r"[a-z]+")
 
 TEST_CALLS_PATH = Path(__file__).resolve().parent.parent / "data" / "test_calls.yaml"
 
@@ -89,9 +93,35 @@ def check_tool_calls(expected: list[dict], actual: list[dict]) -> bool:
     return True
 
 
+def _spoken_numbers(text: str) -> set[int]:
+    """Find Hindi/Hinglish spoken numbers in `text`, e.g. "paanch sau" (500)
+    or "das" (10) — the system prompt requires spoken numbers, never digits
+    (see app/prompts.py), so a `must_mention` digit term has to be checked
+    against this too, not just a literal digit substring."""
+    words = _ALPHA_WORD.findall(text.lower())
+    found = set()
+    i = 0
+    while i < len(words):
+        unit = timeparse.NUM_WORDS.get(words[i])
+        if unit is not None and i + 1 < len(words) and words[i + 1] in _MULTIPLIER_WORDS:
+            found.add(unit * _MULTIPLIER_WORDS[words[i + 1]])
+            i += 2
+            continue
+        if unit is not None:
+            found.add(unit)
+        i += 1
+    return found
+
+
 def check_must_mention(terms: list[str], reply: str) -> bool:
     reply_lower = reply.lower()
-    return all(term.lower() in reply_lower for term in terms)
+    for term in terms:
+        if term.lower() in reply_lower:
+            continue
+        if term.isdigit() and int(term) in _spoken_numbers(reply):
+            continue
+        return False
+    return True
 
 
 _NUMBER_RUN = re.compile(r"\d+")
@@ -117,13 +147,13 @@ class EvalResult:
     reasons: list[str] = field(default_factory=list)
 
 
-def render_report(results: list[EvalResult]) -> str:
+def render_report(results: list[EvalResult], *, title: str = "Eval report") -> str:
     total = len(results)
     passed = sum(1 for r in results if r.passed)
     rate = (passed / total * 100) if total else 0.0
 
     lines = [
-        "# Phase 2 eval report",
+        f"# {title}",
         "",
         f"**Pass rate: {passed}/{total} ({rate:.0f}%)**",
         "",
