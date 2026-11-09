@@ -46,3 +46,17 @@ Design choices and discoveries worth remembering, added as phases progress.
   WebRTC client at `http://localhost:7860`. `bot()` builds the transport via
   `pipecat.runner.utils.create_transport()` (keyed by transport name — `"webrtc"` for now), so
   adding Twilio in Phase 8 should mean adding one more dict entry, not restructuring this file.
+- **`app/metrics.py` has no pipecat imports, on purpose.** `TurnTimer`/`durations_ms()`/
+  `turn_log_line()` only know timestamps (epoch seconds) and JSON, so they're trivially unit-testable
+  with synthetic data (`tests/unit/test_metrics.py`) without touching the frame-processing stack.
+  `TurnTracker` is a plain mutable holder shared between two pipeline stages that otherwise have no
+  reference to each other: `AgentProcessor` (marks `speech_end`/`stt_final`/`llm_first_token`) and a
+  new `TTSLatencyMarker` processor placed right after `tts` in `build_pipeline()` (marks
+  `tts_first_audio` and logs the completed turn, since it's the last stage to know the turn is done).
+  `speech_end` comes from `VADUserStoppedSpeakingFrame.timestamp` itself rather than re-stamping on
+  arrival, since VAD already records when it made that determination.
+- **`llm_first_token` and `tts_first_audio` aren't real streaming measurements yet.**
+  `SarvamLLMClient.chat()` and `SarvamHttpTTSService` are both single-shot (one HTTP call, one
+  complete response), not streaming, so "first token" and "first audio byte" both land at "the whole
+  thing is ready." The measurement plumbing exists now so Phase 5's streaming work (task 5.1) can
+  slot in without changing `TurnTimer`'s shape — only when each mark actually happens.

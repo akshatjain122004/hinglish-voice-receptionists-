@@ -27,7 +27,7 @@
 | 1 | Booking engine (no AI) | ✅ Complete |
 | 2 | Text agent "brain" | 🟨 Code complete, gate not formally met — see note below; moved on by explicit user decision |
 | 3 | FAQ RAG | 🟨 Code complete, gate not formally met — see note below; moved on by explicit user decision |
-| 4 | Voice in the browser | ⬜ Not started (next up, per phase 3 close-out decision) |
+| 4 | Voice in the browser | 🟨 All tasks (4.1-4.7) code complete; gate not yet met — no completed voice booking, STT sample test or latency report yet |
 | 5 | Hinglish + latency hardening | ⬜ Not started |
 | 6 | WhatsApp confirmations & reminders | ⬜ Not started |
 | 7 | Google Calendar sync | ⬜ Not started |
@@ -476,14 +476,14 @@ whether later phases (voice, latency hardening, etc.) move the number on their o
 - [x] 4.4 Choose a TTS voice and speaking pace that sound natural for a receptionist. Use Bulbul v2 while testing because it's cheaper.
 - [x] 4.5 Greeting on connect: "Namaste! [Clinic] mein aapka swagat hai. Main aapki kya madad kar sakti hoon?"
 - [x] 4.6 Save every session's transcript to `CallLog`.
-- [ ] 4.7 `app/metrics.py`: timestamp each stage (speech end → STT final → LLM first token → TTS first audio byte) and log one JSON line per turn.
+- [x] 4.7 `app/metrics.py`: timestamp each stage (speech end → STT final → LLM first token → TTS first audio byte) and log one JSON line per turn.
 
 Tasks 4.2–4.5 landed together: `app/voice_bot.py`'s `bot(runner_args)`/`run_bot()`
 entry point can't exist without *some* concrete STT mode and TTS voice, and the
 greeting is two lines in the same `on_client_connected` handler the entry point
 needed anyway — splitting them into separate round trips would have meant
 reopening the same function three times. 4.6 (CallLog) and 4.7 (metrics) are
-separate tasks since they're genuinely separable; 4.7 is still open.
+separate tasks since they're genuinely separable.
 
 `bot()` uses `pipecat.runner.run.main()` (the `runner` extra, now in
 `pyproject.toml`) rather than a hand-built FastAPI route — it auto-discovers
@@ -523,8 +523,31 @@ pipeline).
 ### Automated tests
 - [x] `tests/integration/test_pipeline_build.py`: the pipeline builds with mocked services, and the frame order is correct.
 - [x] `tests/integration/test_voice_text_equivalence.py`: feed **text frames** (bypassing STT) into the pipeline with a `FakeLLM`. The resulting tool calls match the Phase 2 text agent for the same input.
-- [ ] `tests/unit/test_metrics.py`: given synthetic timestamps, per-stage durations are computed correctly.
+- [x] `tests/unit/test_metrics.py`: given synthetic timestamps, per-stage durations are computed correctly.
 - [ ] `live` test `tests/evals/test_stt_samples.py`: record **10 short `.wav` files** of yourself and friends saying Hinglish booking sentences and save them in `tests/fixtures/audio/`. The STT transcript must contain the key entities (day, time, service). Target: at least 8 of 10 pass.
+
+**4.7:** `app/metrics.py` is deliberately pipecat-agnostic — `TurnTimer` (4
+optional epoch-second timestamps), `durations_ms()` (pure, the thing
+`test_metrics.py` tests with synthetic data) and `turn_log_line()`/`log_turn()`
+only know timestamps and JSON, no pipecat imports. `TurnTracker` is the shared
+mutable holder that lets two different pipeline stages mark the same turn:
+`AgentProcessor` now marks `speech_end` (from `VADUserStoppedSpeakingFrame`'s
+own `timestamp` field — more accurate than re-timestamping on arrival),
+`stt_final` and `llm_first_token`; a new `TTSLatencyMarker` processor (added to
+`build_pipeline()` right after `tts`, only when a `turn_tracker` is passed in)
+marks `tts_first_audio` on the first `TTSAudioRawFrame` per utterance and logs
+the finished turn — it's the last stage, so it's the natural place to log.
+
+**Known Phase 4 limitation, documented rather than faked:** `llm_first_token`
+isn't literally a first streamed token — `Agent`/`SarvamLLMClient` don't stream
+yet (that's Phase 5 task 5.1), so it's stamped when the full reply is ready.
+Same idea for `tts_first_audio`: `SarvamHttpTTSService` returns one complete
+clip, not a stream, so "first audio byte" is "the whole clip is ready." The
+measurement plumbing is in place now; Phase 5's streaming work is what will
+make these stage boundaries meaningfully tighter. Tested in
+`tests/integration/test_turn_metrics.py` (both marking paths, through the real
+frame-processing stack) and `tests/integration/test_pipeline_build.py` (the
+marker is only added when `turn_tracker` is given).
 
 `app/voice_bot.py` reuses `Agent` from Phase 2/3 as-is: `AgentProcessor` (a
 `FrameProcessor`) is a thin bridge that calls `Agent.handle_turn()` on a final
@@ -543,7 +566,7 @@ fills that role on both sides.
 
 Both tests use fakes (`IdentityFilter` stand-ins for transport/STT/TTS,
 `FakeLLM` for the brain) — no real Sarvam/Silero/WebRTC objects — so this
-stays in the free offline suite. Full suite is 202 passed in ~27s as of 4.6,
+stays in the free offline suite. Full suite is 209 passed in ~27-28s as of 4.7,
 consistent with the over-30s-budget note already flagged at Phase 3
 close-out (not a new regression from this task).
 
