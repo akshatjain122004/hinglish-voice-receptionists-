@@ -76,3 +76,23 @@ async def test_voice_frame_produces_same_tool_call_as_text_agent():
 
     assert any(isinstance(f, LLMFullResponseStartFrame) for f in down_frames)
     assert any(isinstance(f, LLMFullResponseEndFrame) for f in down_frames)
+
+
+@pytest.mark.asyncio
+async def test_on_turn_hook_receives_user_text_and_reply():
+    agent = Agent(FakeLLM(responses=[LLMResponse(content="Namaste!")]), now=NOW)
+    seen_turns: list[tuple[str, str]] = []
+    processor = AgentProcessor(
+        agent,
+        session_id="voice-call",
+        on_turn=lambda user_text, reply: seen_turns.append((user_text, reply)),
+    )
+
+    await run_test(
+        processor,
+        frames_to_send=[
+            TranscriptionFrame(text="Namaste", user_id="caller", timestamp="2026-11-09T10:00:00Z")
+        ],
+    )
+
+    assert seen_turns == [("Namaste", "Namaste!")]

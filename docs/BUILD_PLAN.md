@@ -475,7 +475,7 @@ whether later phases (voice, latency hardening, etc.) move the number on their o
 - [x] 4.3 Choose the STT model and language mode for code-mixed speech (e.g. Saaras with `hi-IN` / auto-detect) and record the choice in `docs/architecture.md`.
 - [x] 4.4 Choose a TTS voice and speaking pace that sound natural for a receptionist. Use Bulbul v2 while testing because it's cheaper.
 - [x] 4.5 Greeting on connect: "Namaste! [Clinic] mein aapka swagat hai. Main aapki kya madad kar sakti hoon?"
-- [ ] 4.6 Save every session's transcript to `CallLog`.
+- [x] 4.6 Save every session's transcript to `CallLog`.
 - [ ] 4.7 `app/metrics.py`: timestamp each stage (speech end → STT final → LLM first token → TTS first audio byte) and log one JSON line per turn.
 
 Tasks 4.2–4.5 landed together: `app/voice_bot.py`'s `bot(runner_args)`/`run_bot()`
@@ -483,7 +483,7 @@ entry point can't exist without *some* concrete STT mode and TTS voice, and the
 greeting is two lines in the same `on_client_connected` handler the entry point
 needed anyway — splitting them into separate round trips would have meant
 reopening the same function three times. 4.6 (CallLog) and 4.7 (metrics) are
-left for separate tasks since they're genuinely separable.
+separate tasks since they're genuinely separable; 4.7 is still open.
 
 `bot()` uses `pipecat.runner.run.main()` (the `runner` extra, now in
 `pyproject.toml`) rather than a hand-built FastAPI route — it auto-discovers
@@ -492,10 +492,33 @@ left for separate tasks since they're genuinely separable.
 choices and the reasoning behind each are in `docs/architecture.md`'s new
 "Phase 4" section (`saaras:v4`/`codemix`, `bulbul:v3`/`priya`, VAD as its own
 `VADProcessor` pipeline stage — Pipecat 1.15.0 moved it off `TransportParams`,
-unlike older Pipecat docs). This hasn't been run live yet (costs Sarvam
-credits) — the "Complete 5 full bookings by voice" manual check below is
-still open and is how 4.2's "talk from the browser" goal actually gets
-verified.
+unlike older Pipecat docs).
+
+**Ran it live 2026-11-09** (real mic, real Sarvam credits): connected over
+WebRTC, heard the greeting, and had a real multi-turn Hindi/English/Hinglish
+conversation — STT correctly handled code-switching ("Consultation.", "book
+कर दो" mid-sentence), the agent asked for service/name and read back the
+details before booking, exactly per the non-negotiable rules. No server
+errors; confirmed via the real SQLite DB that zero appointments exist, so the
+one tool call the LLM actually made was `transfer_to_human`, not
+`book_appointment`. Root cause (confirmed in the server's debug log, not
+guessed): the caller's "haan, kar do" landed as two separate VAD-detected
+utterances 0.6s apart ("हाँ।" then "कर दो।" as two separate STT finals, each
+sent to `Agent.handle_turn()` as its own turn), so the LLM only ever saw a
+fragmented confirmation and reasonably escalated instead of booking on an
+ambiguous isolated "yes". This is Phase 5 task 5.5's territory ("tune the VAD
+so it doesn't cut people off mid-sentence"), not a Phase 4 defect — but it
+does mean the "Complete 5 full bookings by voice" manual check below is still
+open; this first live attempt didn't end in a completed booking.
+
+`app/voice_bot.py`'s `CallLogger` (new) saves one `CallLog` row per WebRTC
+session: `start()` on connect (keyed by the WebRTC session id — there's no
+phone number yet, that arrives with Twilio in Phase 8), `record_turn()`
+appended via `AgentProcessor`'s new `on_turn` hook after every turn, `end()`
+on disconnect. Tested in `tests/unit/test_voice_bot.py` (CRUD against the
+in-memory `db` fixture) and `tests/integration/test_voice_text_equivalence.py`
+(the `on_turn` hook fires with the right text/reply through the real frame
+pipeline).
 
 ### Automated tests
 - [x] `tests/integration/test_pipeline_build.py`: the pipeline builds with mocked services, and the frame order is correct.
@@ -520,7 +543,7 @@ fills that role on both sides.
 
 Both tests use fakes (`IdentityFilter` stand-ins for transport/STT/TTS,
 `FakeLLM` for the brain) — no real Sarvam/Silero/WebRTC objects — so this
-stays in the free offline suite. Full suite is still 197 passed in ~32s,
+stays in the free offline suite. Full suite is 202 passed in ~27s as of 4.6,
 consistent with the over-30s-budget note already flagged at Phase 3
 close-out (not a new regression from this task).
 
