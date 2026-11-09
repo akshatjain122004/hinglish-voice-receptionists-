@@ -184,7 +184,7 @@ class AgentProcessor(FrameProcessor):
                 on_reply_chunk=on_reply_chunk,
             )
 
-            if not first_chunk_seen and reply:
+            if not first_chunk_seen:
                 # handle_turn() can return a reply (e.g. FALLBACK_MESSAGE, after
                 # hitting max_tool_rounds) without ever streaming content through
                 # on_reply_chunk - push it now so the caller still hears something.
