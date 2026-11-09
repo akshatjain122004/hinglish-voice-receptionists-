@@ -471,12 +471,31 @@ whether later phases (voice, latency hardening, etc.) move the number on their o
 
 ### Tasks
 - [x] 4.1 `app/voice_bot.py`: a Pipecat pipeline with `transport.input → Silero VAD → Sarvam STT → user aggregator → LLM (with tools from Phase 2) → Sarvam TTS → transport.output → assistant aggregator`.
-- [ ] 4.2 Use Pipecat's **SmallWebRTC** transport plus its sample web client, so you talk from the browser.
-- [ ] 4.3 Choose the STT model and language mode for code-mixed speech (e.g. Saaras with `hi-IN` / auto-detect) and record the choice in `docs/architecture.md`.
-- [ ] 4.4 Choose a TTS voice and speaking pace that sound natural for a receptionist. Use Bulbul v2 while testing because it's cheaper.
-- [ ] 4.5 Greeting on connect: "Namaste! [Clinic] mein aapka swagat hai. Main aapki kya madad kar sakti hoon?"
+- [x] 4.2 Use Pipecat's **SmallWebRTC** transport plus its sample web client, so you talk from the browser.
+- [x] 4.3 Choose the STT model and language mode for code-mixed speech (e.g. Saaras with `hi-IN` / auto-detect) and record the choice in `docs/architecture.md`.
+- [x] 4.4 Choose a TTS voice and speaking pace that sound natural for a receptionist. Use Bulbul v2 while testing because it's cheaper.
+- [x] 4.5 Greeting on connect: "Namaste! [Clinic] mein aapka swagat hai. Main aapki kya madad kar sakti hoon?"
 - [ ] 4.6 Save every session's transcript to `CallLog`.
 - [ ] 4.7 `app/metrics.py`: timestamp each stage (speech end → STT final → LLM first token → TTS first audio byte) and log one JSON line per turn.
+
+Tasks 4.2–4.5 landed together: `app/voice_bot.py`'s `bot(runner_args)`/`run_bot()`
+entry point can't exist without *some* concrete STT mode and TTS voice, and the
+greeting is two lines in the same `on_client_connected` handler the entry point
+needed anyway — splitting them into separate round trips would have meant
+reopening the same function three times. 4.6 (CallLog) and 4.7 (metrics) are
+left for separate tasks since they're genuinely separable.
+
+`bot()` uses `pipecat.runner.run.main()` (the `runner` extra, now in
+`pyproject.toml`) rather than a hand-built FastAPI route — it auto-discovers
+`bot(runner_args)` and serves Pipecat's prebuilt WebRTC client. Launch with
+`python scripts/run_voice_bot.py` and open `http://localhost:7860`. STT/TTS/VAD
+choices and the reasoning behind each are in `docs/architecture.md`'s new
+"Phase 4" section (`saaras:v4`/`codemix`, `bulbul:v3`/`priya`, VAD as its own
+`VADProcessor` pipeline stage — Pipecat 1.15.0 moved it off `TransportParams`,
+unlike older Pipecat docs). This hasn't been run live yet (costs Sarvam
+credits) — the "Complete 5 full bookings by voice" manual check below is
+still open and is how 4.2's "talk from the browser" goal actually gets
+verified.
 
 ### Automated tests
 - [x] `tests/integration/test_pipeline_build.py`: the pipeline builds with mocked services, and the frame order is correct.

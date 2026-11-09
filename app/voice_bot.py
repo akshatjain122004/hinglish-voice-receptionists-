@@ -17,8 +17,13 @@ tests/integration/test_voice_text_equivalence.py).
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
+import aiohttp
+import yaml
+from loguru import logger
+from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.frames.frames import (
     Frame,
     LLMFullResponseEndFrame,
@@ -27,12 +32,22 @@ from pipecat.frames.frames import (
     TranscriptionFrame,
 )
 from pipecat.pipeline.pipeline import Pipeline
+from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.audio.vad_processor import VADProcessor
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
+from pipecat.runner.types import RunnerArguments
+from pipecat.runner.utils import create_transport
+from pipecat.services.sarvam.stt import SarvamSTTService
+from pipecat.services.sarvam.tts import SarvamHttpTTSService
+from pipecat.transports.base_transport import BaseTransport, TransportParams
+from pipecat.workers.runner import WorkerRunner
 
-from app.agent import Agent
+from app.agent import Agent, SarvamLLMClient
+from app.config import get_settings
 
 OnToolCall = Callable[[str, dict[str, Any], dict[str, Any]], None]
+
+CLINIC_PATH = Path(__file__).resolve().parent.parent / "data" / "clinic.yaml"
 
 
 class AgentProcessor(FrameProcessor):
@@ -91,3 +106,64 @@ def build_pipeline(
             transport.output(),
         ]
     )
+
+
+def _greeting() -> str:
+    """Namaste! <clinic> mein aapka swagat hai... with the clinic's own name."""
+    clinic = yaml.safe_load(CLINIC_PATH.read_text())
+    return f"Namaste! {clinic['name']} mein aapka swagat hai. Main aapki kya madad kar sakti hoon?"
+
+
+async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> None:
+    """Runs the voice pipeline for one call over an already-built transport.
+
+    STT uses `saaras:v4` in `codemix` mode (built for Hinglish, not plain
+    `hi-IN`) and TTS uses `bulbul:v3` with a female speaker (`priya`) to match
+    the receptionist persona already baked into `app/prompts.py` (e.g.
+    "...WhatsApp kar dungi") — see `docs/architecture.md` for both choices.
+    """
+    settings = get_settings()
+    agent = Agent(SarvamLLMClient(settings.sarvam_api_key))
+
+    async with aiohttp.ClientSession() as session:
+        stt = SarvamSTTService(api_key=settings.sarvam_api_key, mode="codemix")
+        tts = SarvamHttpTTSService(
+            api_key=settings.sarvam_api_key,
+            aiohttp_session=session,
+            settings=SarvamHttpTTSService.Settings(voice="priya"),
+        )
+        vad_analyzer = SileroVADAnalyzer()
+
+        pipeline = build_pipeline(
+            transport,
+            agent,
+            vad_analyzer=vad_analyzer,
+            stt=stt,
+            tts=tts,
+            session_id=runner_args.session_id,
+        )
+
+        worker = PipelineWorker(pipeline, params=PipelineParams())
+        runner = WorkerRunner(handle_sigint=runner_args.handle_sigint)
+        await runner.add_workers(worker)
+
+        @transport.event_handler("on_client_connected")
+        async def on_client_connected(transport: BaseTransport, client: Any) -> None:
+            logger.info("Caller connected")
+            await worker.queue_frame(TextFrame(_greeting()))
+
+        @transport.event_handler("on_client_disconnected")
+        async def on_client_disconnected(transport: BaseTransport, client: Any) -> None:
+            logger.info("Caller disconnected")
+            await runner.cancel()
+
+        await runner.run()
+
+
+async def bot(runner_args: RunnerArguments) -> None:
+    """Pipecat dev-runner entry point: one call, started from the browser."""
+    transport = await create_transport(
+        runner_args,
+        {"webrtc": lambda: TransportParams(audio_in_enabled=True, audio_out_enabled=True)},
+    )
+    await run_bot(transport, runner_args)
