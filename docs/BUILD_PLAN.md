@@ -490,7 +490,7 @@ separate tasks since they're genuinely separable; 4.7 is still open.
 `bot(runner_args)` and serves Pipecat's prebuilt WebRTC client. Launch with
 `python scripts/run_voice_bot.py` and open `http://localhost:7860`. STT/TTS/VAD
 choices and the reasoning behind each are in `docs/architecture.md`'s new
-"Phase 4" section (`saaras:v4`/`codemix`, `bulbul:v3`/`priya`, VAD as its own
+"Phase 4" section (`saaras:v4`/`codemix`, `bulbul:v3`/`shreya`, VAD as its own
 `VADProcessor` pipeline stage — Pipecat 1.15.0 moved it off `TransportParams`,
 unlike older Pipecat docs).
 

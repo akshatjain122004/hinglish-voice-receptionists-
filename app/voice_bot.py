@@ -168,7 +168,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
     """Runs the voice pipeline for one call over an already-built transport.
 
     STT uses `saaras:v4` in `codemix` mode (built for Hinglish, not plain
-    `hi-IN`) and TTS uses `bulbul:v3` with a female speaker (`priya`) to match
+    `hi-IN`) and TTS uses `bulbul:v3` with a female speaker (`shreya`) to match
     the receptionist persona already baked into `app/prompts.py` (e.g.
     "...WhatsApp kar dungi") — see `docs/architecture.md` for both choices.
     """
@@ -182,7 +182,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         tts = SarvamHttpTTSService(
             api_key=settings.sarvam_api_key,
             aiohttp_session=session,
-            settings=SarvamHttpTTSService.Settings(voice="priya"),
+            settings=SarvamHttpTTSService.Settings(voice="shreya"),
         )
         vad_analyzer = SileroVADAnalyzer()
 

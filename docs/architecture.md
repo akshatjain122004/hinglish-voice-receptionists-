@@ -18,9 +18,14 @@ Design choices and discoveries worth remembering, added as phases progress.
   Sarvam's mode built specifically for Hinglish speech (as opposed to `transcribe`/`translate`/
   `translit`, which assume one language), matching this project's actual callers better than
   pinning `language="hi-IN"`.
-- **TTS: `bulbul:v3` with speaker `priya`**, not the SDK default `shubh`. `shubh` reads male;
+- **TTS: `bulbul:v3` with speaker `shreya`**, not the SDK default `shubh`. `shubh` reads male;
   `app/prompts.py`'s fallback copy is already written in feminine voice ("...WhatsApp kar
-  **dungi**"), so the speaker was picked to match the persona already baked into the prompts.
+  **dungi**"), so a female speaker was picked to match the persona already baked into the prompts.
+  Picked `shreya` over the initial pick (`priya`) after listening to short samples of six v3
+  speakers (`priya`, `neha`, `pooja`, `ishita`, `kavya`, `shreya`) generated via
+  `POST https://api.sarvam.ai/text-to-speech` with the actual bot greeting — a user preference call,
+  not a technical one; all of bulbul:v3's Indian-named speakers are genuinely Indian-accented voices
+  (Sarvam is an India-focused TTS provider), so this was about tone/personality, not accent.
 - **Pipecat 1.15.0 moved VAD off `TransportParams`.** Older Pipecat docs attach
   `vad_analyzer=SileroVADAnalyzer()` to the transport's params; in 1.15.0 that field doesn't exist
   on `TransportParams` any more. VAD is now its own pipeline stage,
