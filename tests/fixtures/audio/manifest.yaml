@@ -1,0 +1,86 @@
+# Golden recordings for tests/evals/test_stt_samples.py (Phase 4, BUILD_PLAN
+# task "record 10 short .wav files of yourself and friends saying Hinglish
+# booking sentences").
+#
+# How to record:
+#   1. Read each `text` line aloud naturally (Hinglish, not over-enunciated).
+#   2. Save as a mono WAV, any common sample rate (16kHz+), under the matching
+#      `file` name directly in this tests/fixtures/audio/ directory.
+#   3. Run: pytest -m live tests/evals/test_stt_samples.py
+#   4. Missing files are reported, not failed — add them incrementally and
+#      re-run; the test only asserts the 8/10 pass rate once all 10 exist.
+#
+# `entities`: each value is a list of acceptable alternates (STT sometimes
+# transcribes a number as a digit, sometimes as the spoken word, and may mix
+# Devanagari/Latin script) — any one alternate appearing in the transcript
+# satisfies that entity.
+
+- file: sample_01.wav
+  text: "Kal shaam saade paanch baje cleaning ka slot chahiye."
+  entities:
+    day: ["kal"]
+    time: ["paanch", "5"]
+    service: ["cleaning"]
+
+- file: sample_02.wav
+  text: "Parso subah das baje consultation book kar do."
+  entities:
+    day: ["parso"]
+    time: ["das", "10"]
+    service: ["consultation"]
+
+- file: sample_03.wav
+  text: "Aaj dopahar teen baje filling ka time hai kya?"
+  entities:
+    day: ["aaj"]
+    time: ["teen", "3"]
+    service: ["filling"]
+
+- file: sample_04.wav
+  text: "Mujhe Monday ko root canal ke liye appointment chahiye, subah gyarah baje."
+  entities:
+    day: ["monday", "सोमवार"]
+    time: ["gyarah", "11"]
+    service: ["root canal", "root"]
+
+- file: sample_05.wav
+  text: "Kal shaam saat baje teeth whitening karwani hai."
+  entities:
+    day: ["kal"]
+    time: ["saat", "7"]
+    service: ["whitening"]
+
+- file: sample_06.wav
+  text: "Sunday ko subah nau baje cleaning ka slot hai kya?"
+  entities:
+    day: ["sunday", "रविवार"]
+    time: ["nau", "9"]
+    service: ["cleaning"]
+
+- file: sample_07.wav
+  text: "Mera consultation Tuesday dopahar baarah baje rakh dena."
+  entities:
+    day: ["tuesday", "मंगलवार"]
+    time: ["baarah", "12"]
+    service: ["consultation"]
+
+- file: sample_08.wav
+  text: "Aaj raat ko aath baje filling ka appointment chahiye."
+  entities:
+    day: ["aaj"]
+    time: ["aath", "8"]
+    service: ["filling"]
+
+- file: sample_09.wav
+  text: "Parso shaam chhe baje root canal book karna hai."
+  entities:
+    day: ["parso"]
+    time: ["chhe", "6"]
+    service: ["root canal", "root"]
+
+- file: sample_10.wav
+  text: "Kal subah saade das baje whitening ke liye time chahiye."
+  entities:
+    day: ["kal"]
+    time: ["das", "10"]
+    service: ["whitening"]

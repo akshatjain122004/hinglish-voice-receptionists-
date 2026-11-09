@@ -27,7 +27,7 @@
 | 1 | Booking engine (no AI) | ✅ Complete |
 | 2 | Text agent "brain" | 🟨 Code complete, gate not formally met — see note below; moved on by explicit user decision |
 | 3 | FAQ RAG | 🟨 Code complete, gate not formally met — see note below; moved on by explicit user decision |
-| 4 | Voice in the browser | 🟨 All tasks + both manual checks done (5 real bookings, latency measured); gate not formally met — STT sample test not started |
+| 4 | Voice in the browser | 🟨 All tasks + both manual checks done (5 real bookings, latency measured); gate not formally met — STT sample test harness built, 10 real recordings (human voice) still needed |
 | 5 | Hinglish + latency hardening | ⬜ Not started |
 | 6 | WhatsApp confirmations & reminders | ⬜ Not started |
 | 7 | Google Calendar sync | ⬜ Not started |
@@ -526,6 +526,19 @@ pipeline).
 - [x] `tests/unit/test_metrics.py`: given synthetic timestamps, per-stage durations are computed correctly.
 - [ ] `live` test `tests/evals/test_stt_samples.py`: record **10 short `.wav` files** of yourself and friends saying Hinglish booking sentences and save them in `tests/fixtures/audio/`. The STT transcript must contain the key entities (day, time, service). Target: at least 8 of 10 pass.
 
+**STT sample test harness is built; the 10 real recordings are not.** This one genuinely needs a
+human voice — can't be done by Claude. `app/stt_eval.py` (`load_manifest`/`check_entities`/
+`transcribe`/`render_report`, unit-tested with fakes in `tests/unit/test_stt_eval.py`) and
+`tests/evals/test_stt_samples.py` (the `live` test) are ready; `tests/fixtures/audio/manifest.yaml`
+has the 10 sentences to record (varied day/time/service combinations), with instructions at the
+top of the file. `transcribe()` calls Sarvam's batch REST endpoint
+(`POST https://api.sarvam.ai/speech-to-text`, model `saaras:v4` — matching the live pipeline's STT
+model, confirmed working via a live smoke call against an unrelated existing `.wav`), separate from
+the realtime WebSocket STT `app/voice_bot.py` uses for live calls. Missing files are reported, not
+failed, so the test can be re-run as recordings are added one at a time; the 8/10 gate only applies
+once all 10 exist. Verified the skip path end-to-end (zero cost, no files recorded yet) — see
+`reports/stt_samples.md`.
+
 **4.7:** `app/metrics.py` is deliberately pipecat-agnostic — `TurnTimer` (4
 optional epoch-second timestamps), `durations_ms()` (pure, the thing
 `test_metrics.py` tests with synthetic data) and `turn_log_line()`/`log_turn()`
@@ -620,9 +633,10 @@ inflates some readings beyond what the `dropped` filter catches — both are Pha
 ### ✅ Phase complete when
 You can book by voice end to end, the STT sample test passes at ≥ 8/10, and the latency numbers are measured and recorded (no target yet; you optimise in Phase 5).
 
-**Status: booking-by-voice and latency measurement are done; the STT sample test
-(`tests/evals/test_stt_samples.py`, 10 recorded `.wav` files) has not been started.** Not blocking
-further work by itself, but the gate isn't formally complete until it's done or explicitly deferred.
+**Status: booking-by-voice and latency measurement are done; the STT sample test's harness is
+built, but its 10 real recordings (a human-voice task) are not.** Not blocking further work by
+itself, but the gate isn't formally complete until the recordings are made and the live test run,
+or this is explicitly deferred.
 
 ---
 
