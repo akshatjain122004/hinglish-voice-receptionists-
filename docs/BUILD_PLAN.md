@@ -470,7 +470,7 @@ whether later phases (voice, latency hardening, etc.) move the number on their o
 **Time:** 1 week · **Cost:** ~₹50–150 of Sarvam credits
 
 ### Tasks
-- [ ] 4.1 `app/voice_bot.py`: a Pipecat pipeline with `transport.input → Silero VAD → Sarvam STT → user aggregator → LLM (with tools from Phase 2) → Sarvam TTS → transport.output → assistant aggregator`.
+- [x] 4.1 `app/voice_bot.py`: a Pipecat pipeline with `transport.input → Silero VAD → Sarvam STT → user aggregator → LLM (with tools from Phase 2) → Sarvam TTS → transport.output → assistant aggregator`.
 - [ ] 4.2 Use Pipecat's **SmallWebRTC** transport plus its sample web client, so you talk from the browser.
 - [ ] 4.3 Choose the STT model and language mode for code-mixed speech (e.g. Saaras with `hi-IN` / auto-detect) and record the choice in `docs/architecture.md`.
 - [ ] 4.4 Choose a TTS voice and speaking pace that sound natural for a receptionist. Use Bulbul v2 while testing because it's cheaper.
@@ -479,10 +479,31 @@ whether later phases (voice, latency hardening, etc.) move the number on their o
 - [ ] 4.7 `app/metrics.py`: timestamp each stage (speech end → STT final → LLM first token → TTS first audio byte) and log one JSON line per turn.
 
 ### Automated tests
-- [ ] `tests/integration/test_pipeline_build.py`: the pipeline builds with mocked services, and the frame order is correct.
-- [ ] `tests/integration/test_voice_text_equivalence.py`: feed **text frames** (bypassing STT) into the pipeline with a `FakeLLM`. The resulting tool calls match the Phase 2 text agent for the same input.
+- [x] `tests/integration/test_pipeline_build.py`: the pipeline builds with mocked services, and the frame order is correct.
+- [x] `tests/integration/test_voice_text_equivalence.py`: feed **text frames** (bypassing STT) into the pipeline with a `FakeLLM`. The resulting tool calls match the Phase 2 text agent for the same input.
 - [ ] `tests/unit/test_metrics.py`: given synthetic timestamps, per-stage durations are computed correctly.
 - [ ] `live` test `tests/evals/test_stt_samples.py`: record **10 short `.wav` files** of yourself and friends saying Hinglish booking sentences and save them in `tests/fixtures/audio/`. The STT transcript must contain the key entities (day, time, service). Target: at least 8 of 10 pass.
+
+`app/voice_bot.py` reuses `Agent` from Phase 2/3 as-is: `AgentProcessor` (a
+`FrameProcessor`) is a thin bridge that calls `Agent.handle_turn()` on a final
+`TranscriptionFrame` and emits the reply as TTS text frames
+(`LLMFullResponseStartFrame` / `TextFrame` / `LLMFullResponseEndFrame`) —
+chosen instead of Pipecat's native LLM-service tool-calling because
+`test_voice_text_equivalence.py` requires the voice path and the Phase 2 text
+agent to produce identical tool calls for the same input, which only holds if
+there's one tool-calling implementation, not two. `build_pipeline()` wires
+`transport.input → VADProcessor(Silero) → stt → AgentProcessor → tts →
+transport.output`, matching the plan's diagram (Pipecat's VAD is a pipeline
+stage via `VADProcessor(vad_analyzer=...)` in 1.15.0, not a transport param
+as in older Pipecat docs). No separate "user/assistant aggregator" stage was
+added — `Agent` already keeps its own per-session history, so `AgentProcessor`
+fills that role on both sides.
+
+Both tests use fakes (`IdentityFilter` stand-ins for transport/STT/TTS,
+`FakeLLM` for the brain) — no real Sarvam/Silero/WebRTC objects — so this
+stays in the free offline suite. Full suite is still 197 passed in ~32s,
+consistent with the over-30s-budget note already flagged at Phase 3
+close-out (not a new regression from this task).
 
 ### Manual checks
 - [ ] Complete 5 full bookings by voice in the browser.
