@@ -646,7 +646,34 @@ or this is explicitly deferred.
 **Time:** 1 week · **Cost:** ~₹50–100
 
 ### Tasks
-- [ ] 5.1 Streaming everywhere: switch to the realtime/streaming STT, stream LLM tokens, and start TTS sentence by sentence.
+- [x] 5.1 Streaming everywhere: switch to the realtime/streaming STT, stream LLM tokens, and start TTS sentence by sentence.
+
+STT was already true-streaming (`SarvamSTTService` is a realtime WebSocket service,
+confirmed by reading `pipecat.services.sarvam.stt` — nothing to change there). For LLM
++ TTS: `app/llm_streaming.py` (new) merges Sarvam's fragmented streaming tool-call
+deltas; `Agent.handle_turn()` now consumes `LLMClient.stream_chat()` and forwards
+content live via a new optional `on_reply_chunk` callback, gated so nothing is spoken
+once a tool-call delta has been seen in that round; `AgentProcessor` pushes a
+`TextFrame` per chunk instead of one `TextFrame` per full reply.
+
+No custom sentence-splitter was needed: pipecat's `TTSService` already buffers
+incoming text and dispatches synthesis per completed sentence
+(`TextAggregationMode.SENTENCE`, its existing default) — it just never got a chance to
+help before, since all the text used to arrive in one frame at the end. TTS itself
+stays on `SarvamHttpTTSService` (not swapped for the WebSocket streaming TTS API) —
+deferred to whenever 5.2 (barge-in) is tackled, per the design spec's scoping decision.
+
+Full offline suite: 250 passed in 26.26s, zero regressions (every pre-existing test in
+`test_agent_flow.py`, `test_sarvam_llm_client.py`, `test_voice_text_equivalence.py` and
+`test_turn_metrics.py` still passes unmodified; only new test functions were added).
+No live call was needed to implement or verify this — Sarvam's SSE format was taken
+from their public docs and mocked with `respx`. A live voice call is the next real
+validation, whenever manual Phase 5 testing (the 10-call, 3-person check) happens.
+
+See `docs/superpowers/specs/2026-11-09-voice-streaming-design.md` for the full design
+and `docs/superpowers/plans/2026-11-09-voice-streaming.md` for the implementation
+breakdown.
+
 - [ ] 5.2 **Barge-in:** when the caller starts speaking, stop TTS immediately and drop the queued audio.
 - [ ] 5.3 **Silence handling:** after ~5 s of silence, say "Hello, kya aap line par hain?" After a second silence, say goodbye and end the session.
 - [ ] 5.4 **Filler for slow tools:** if a tool takes more than 700 ms, say "Ek second, check karti hoon…"

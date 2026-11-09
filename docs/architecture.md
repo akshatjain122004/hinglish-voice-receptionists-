@@ -81,3 +81,25 @@ Design choices and discoveries worth remembering, added as phases progress.
   - `start_secs`/`confidence`/`min_volume` were left at Pipecat's defaults — no evidence from the
     Phase 4 test pointed at them, so changing them without a reproduced problem would just be
     guessing.
+- **5.1: LLM streaming + sentence-by-sentence TTS, no custom sentence-splitter needed.**
+  `app/llm_streaming.py` holds the only genuinely new logic — merging Sarvam's
+  fragmented streaming tool-call deltas (id/name once, `arguments` as many small
+  string fragments, all keyed by index) into finished tool calls. Everything else
+  reuses existing machinery: `Agent.handle_turn()` forwards content deltas live via a
+  new `on_reply_chunk` callback (gated off the moment a tool-call delta appears in that
+  round, so nothing speculative ever reaches TTS), and pipecat's `TTSService` already
+  buffers incoming text into sentences before synthesizing
+  (`TextAggregationMode.SENTENCE`, its existing default) — it only needed to actually
+  *receive* text incrementally, which it now does.
+  - `AgentProcessor` pushes a `TextFrame` per chunk instead of one `TextFrame` per full
+    reply, and marks `TurnTracker.llm_first_token` on the first chunk only (same
+    overwrite-guard pattern `TTSLatencyMarker` already used for `tts_first_audio`).
+  - **Correctness fix, not just a latency change:** `Agent.handle_turn()`'s fallback
+    path (hitting `max_tool_rounds`) returns `FALLBACK_MESSAGE` without ever calling
+    `on_reply_chunk` — `AgentProcessor` pushes that reply as a `TextFrame` directly if
+    no chunk was streamed for the turn, or the caller would hear nothing instead of the
+    apology.
+  - TTS stays on `SarvamHttpTTSService` (called once per sentence now, via pipecat's
+    own aggregation, not once per full reply) rather than switching to Sarvam's
+    WebSocket streaming TTS API — that swap is deferred to task 5.2 (barge-in), where
+    pipecat's `SarvamTTSService`/`InterruptibleTTSService` is the more natural fit.
