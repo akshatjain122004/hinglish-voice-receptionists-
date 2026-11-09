@@ -8,7 +8,7 @@ client (Sarvam) can be swapped in later without touching this file.
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Protocol
@@ -16,6 +16,7 @@ from typing import Any, Protocol
 import httpx
 
 from app import prompts, tools
+from app.llm_streaming import ChatDelta, ToolCallAccumulator
 
 MAX_TOOL_ROUNDS = 4
 
@@ -39,9 +40,9 @@ class LLMResponse:
 
 
 class LLMClient(Protocol):
-    async def chat(
+    def stream_chat(
         self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
-    ) -> LLMResponse: ...
+    ) -> AsyncIterator[ChatDelta]: ...
 
 
 class SarvamLLMClient:
@@ -123,6 +124,7 @@ class Agent:
         user_text: str,
         *,
         on_tool_call: Callable[[str, dict[str, Any], dict[str, Any]], None] | None = None,
+        on_reply_chunk: Callable[[str], Awaitable[None]] | None = None,
         caller_phone: str | None = None,
     ) -> str:
         caller_phone = caller_phone if caller_phone is not None else self.caller_phone
@@ -130,28 +132,44 @@ class Agent:
         history.append({"role": "user", "content": user_text})
 
         for _ in range(self.max_tool_rounds):
-            response = await self.llm.chat(history, tools.TOOL_SCHEMAS)
+            accumulator = ToolCallAccumulator()
+            content_buffer = ""
+            saw_tool_call_delta = False
 
-            if not response.tool_calls:
-                reply = response.content or ""
+            async for delta in self.llm.stream_chat(history, tools.TOOL_SCHEMAS):
+                if delta.tool_call_deltas:
+                    saw_tool_call_delta = True
+                    for tool_call_delta in delta.tool_call_deltas:
+                        accumulator.add(tool_call_delta)
+                if delta.content:
+                    content_buffer += delta.content
+                    if on_reply_chunk is not None and not saw_tool_call_delta:
+                        await on_reply_chunk(delta.content)
+
+            tool_calls = [
+                ToolCall(id=f.id, name=f.name, arguments=f.arguments) for f in accumulator.finish()
+            ]
+
+            if not tool_calls:
+                reply = content_buffer
                 history.append({"role": "assistant", "content": reply})
                 return reply
 
             history.append(
                 {
                     "role": "assistant",
-                    "content": response.content,
+                    "content": content_buffer or None,
                     "tool_calls": [
                         {
                             "id": tc.id,
                             "type": "function",
                             "function": {"name": tc.name, "arguments": json.dumps(tc.arguments)},
                         }
-                        for tc in response.tool_calls
+                        for tc in tool_calls
                     ],
                 }
             )
-            for tc in response.tool_calls:
+            for tc in tool_calls:
                 result = tools.call_tool(
                     tc.name, tc.arguments, now=self.now, caller_phone=caller_phone
                 )

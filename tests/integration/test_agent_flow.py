@@ -4,6 +4,7 @@ import pytest
 
 from app.agent import FALLBACK_MESSAGE, Agent, LLMResponse, ToolCall
 from app.booking import IST, book, find_by_phone, get_free_slots
+from app.llm_streaming import ChatDelta, ToolCallDelta
 from tests.fixtures.fake_llm import FakeLLM
 
 NOW = datetime(2026, 11, 9, 10, 0, tzinfo=IST)
@@ -195,3 +196,55 @@ async def test_assistant_tool_call_history_matches_openai_schema(db):
     assert tool_call["type"] == "function"
     assert tool_call["function"]["name"] == "check_slots"
     assert tool_call["function"]["arguments"] == '{"date": "kal", "service": "cleaning"}'
+
+
+@pytest.mark.asyncio
+async def test_on_reply_chunk_fires_once_per_content_chunk_in_order(db):
+    fake = FakeLLM(
+        responses=[[ChatDelta(content="Kal saade paanch "), ChatDelta(content="baje free hai.")]]
+    )
+    agent = Agent(fake, now=NOW)
+    seen: list[str] = []
+
+    async def on_reply_chunk(chunk: str) -> None:
+        seen.append(chunk)
+
+    reply = await agent.handle_turn("call-6", "kal slot hai?", on_reply_chunk=on_reply_chunk)
+
+    assert seen == ["Kal saade paanch ", "baje free hai."]
+    assert reply == "Kal saade paanch baje free hai."
+
+
+@pytest.mark.asyncio
+async def test_on_reply_chunk_is_suppressed_once_a_tool_call_delta_is_seen(db):
+    """Safety gate: once a round has shown even one tool-call delta, no more
+    content from that round is ever forwarded to on_reply_chunk, even if a
+    (hypothetical) content delta arrives afterward in the same round."""
+    fake = FakeLLM(
+        responses=[
+            [
+                ChatDelta(
+                    tool_call_deltas=[
+                        ToolCallDelta(
+                            index=0,
+                            id="1",
+                            name="check_slots",
+                            arguments_fragment='{"date": "kal", "service": "cleaning"}',
+                        )
+                    ]
+                ),
+                ChatDelta(content="this must never be spoken"),
+            ],
+            LLMResponse(content="Kal yeh slots free hain."),
+        ]
+    )
+    agent = Agent(fake, now=NOW)
+    seen: list[str] = []
+
+    async def on_reply_chunk(chunk: str) -> None:
+        seen.append(chunk)
+
+    reply = await agent.handle_turn("call-7", "kal slot hai?", on_reply_chunk=on_reply_chunk)
+
+    assert seen == ["Kal yeh slots free hain."]
+    assert reply == "Kal yeh slots free hain."
