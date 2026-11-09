@@ -28,6 +28,7 @@ import aiohttp
 import yaml
 from loguru import logger
 from pipecat.audio.vad.silero import SileroVADAnalyzer
+from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.frames.frames import (
     Frame,
     LLMFullResponseEndFrame,
@@ -58,6 +59,16 @@ OnToolCall = Callable[[str, dict[str, Any], dict[str, Any]], None]
 OnTurn = Callable[[str, str], None]
 
 CLINIC_PATH = Path(__file__).resolve().parent.parent / "data" / "clinic.yaml"
+
+# Trailing silence (seconds) Silero VAD waits before finalizing a stop.
+# Pipecat's default is 0.2s -- too short for natural Hinglish speech: the
+# Phase 4 live test showed a caller's "haan, kar do" land as two separate
+# VAD-detected utterances 0.6s apart, so the agent only ever saw an isolated,
+# unconfirmable "haan" fragment and escalated to a human instead of booking.
+# 0.7s survives that gap with margin. See docs/architecture.md's Phase 5 note
+# for the latency tradeoff and why this is provisional pending Phase 5's
+# multi-person manual call check.
+VAD_STOP_SECS = 0.7
 
 
 def placeholder_caller_phone(session_id: str) -> str:
@@ -236,6 +247,11 @@ def build_pipeline(
     return Pipeline(stages)
 
 
+def _vad_params() -> VADParams:
+    """The tuned VAD params for `SileroVADAnalyzer`; see `VAD_STOP_SECS`."""
+    return VADParams(stop_secs=VAD_STOP_SECS)
+
+
 def _greeting() -> str:
     """Namaste! <clinic> mein aapka swagat hai... with the clinic's own name."""
     clinic = yaml.safe_load(CLINIC_PATH.read_text())
@@ -272,7 +288,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
             aiohttp_session=session,
             settings=SarvamHttpTTSService.Settings(voice="shreya"),
         )
-        vad_analyzer = SileroVADAnalyzer()
+        vad_analyzer = SileroVADAnalyzer(params=_vad_params())
 
         pipeline = build_pipeline(
             transport,

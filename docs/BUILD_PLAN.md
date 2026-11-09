@@ -650,7 +650,21 @@ or this is explicitly deferred.
 - [ ] 5.2 **Barge-in:** when the caller starts speaking, stop TTS immediately and drop the queued audio.
 - [ ] 5.3 **Silence handling:** after ~5 s of silence, say "Hello, kya aap line par hain?" After a second silence, say goodbye and end the session.
 - [ ] 5.4 **Filler for slow tools:** if a tool takes more than 700 ms, say "Ek second, check karti hoon…"
-- [ ] 5.5 Tune the VAD so it doesn't cut people off mid-sentence or wait too long. Note the final parameters in the docs.
+- [x] 5.5 Tune the VAD so it doesn't cut people off mid-sentence or wait too long. Note the final parameters in the docs.
+
+Raised Silero VAD's `stop_secs` from Pipecat's default 0.2s to 0.7s (`app/voice_bot.py`'s
+`VAD_STOP_SECS`), fixing the exact bug the Phase 4 live test documented: a caller's "haan, kar do"
+has a 0.6s gap between the two words, past the 0.2s default, so VAD finalized a stop after "haan"
+alone and the agent saw only an isolated, unconfirmable fragment and escalated to a human instead
+of booking (root cause confirmed by reading `pipecat.audio.vad.vad_analyzer`'s state machine and
+`pipecat.services.sarvam.stt`'s handling of `VADUserStoppedSpeakingFrame` — not guessed). Full
+reasoning and the latency tradeoff (this delay is invisible to `TurnTracker`, so it adds ~0.5s of
+real caller-perceived latency Phase 4's report never counted) are in `docs/architecture.md`'s new
+Phase 5 section. Unit-tested in `tests/unit/test_voice_bot.py`
+(`test_vad_params_uses_the_tuned_stop_secs`); full offline suite still green.
+
+**0.7s is provisional, not final** — this needs the manual multi-person call check below (awkward
+pause Y/N) to confirm it's not now *too* long; no unit test can validate that trade-off.
 - [ ] 5.6 **Spoken output normalisation:** `17:30` → "saade paanch baje", `₹500` → "paanch sau rupaye", and phone numbers read in pairs.
 - [ ] 5.7 Shorten the system prompt and cache the static part of the context to reduce LLM time-to-first-token.
 - [ ] 5.8 Handle STT noise: if the transcript is empty or under 2 characters, ignore it instead of sending it to the LLM.

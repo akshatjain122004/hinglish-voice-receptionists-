@@ -4,7 +4,7 @@ from sqlmodel import select
 
 from app import booking
 from app import db as db_module
-from app.voice_bot import CallLogger, placeholder_caller_phone
+from app.voice_bot import VAD_STOP_SECS, CallLogger, _vad_params, placeholder_caller_phone
 
 
 def test_call_logger_start_creates_a_call_log_row(db):
@@ -75,3 +75,11 @@ class TestPlaceholderCallerPhone:
         """Keeps concurrent browser testers' bookings from colliding on one
         shared phone number (booking.py keys cancel/reschedule by phone)."""
         assert placeholder_caller_phone("session-a") != placeholder_caller_phone("session-b")
+
+
+def test_vad_params_uses_the_tuned_stop_secs():
+    """Phase 5 task 5.5: Pipecat's 0.2s default VAD stop_secs split a real
+    caller's "haan, kar do" into two separate utterances 0.6s apart (see
+    VAD_STOP_SECS's docstring and docs/architecture.md's Phase 5 note)."""
+    assert _vad_params().stop_secs == VAD_STOP_SECS
+    assert VAD_STOP_SECS > 0.6

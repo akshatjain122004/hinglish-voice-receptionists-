@@ -60,3 +60,24 @@ Design choices and discoveries worth remembering, added as phases progress.
   complete response), not streaming, so "first token" and "first audio byte" both land at "the whole
   thing is ready." The measurement plumbing exists now so Phase 5's streaming work (task 5.1) can
   slot in without changing `TurnTimer`'s shape — only when each mark actually happens.
+
+## Phase 5
+
+- **5.5: Silero VAD's `stop_secs` raised from Pipecat's default 0.2s to 0.7s**
+  (`app/voice_bot.py`'s `VAD_STOP_SECS`/`_vad_params()`). Root cause, confirmed in the Phase 4 live
+  test: `stop_secs` is the trailing silence VAD waits before it finalizes a stop, and
+  `SarvamSTTService` finalizes the transcript on exactly that signal (see
+  `pipecat.services.sarvam.stt`'s `VADUserStoppedSpeakingFrame` handling); a caller's "haan, kar do"
+  had a 0.6s gap between the two words, well past the 0.2s default, so VAD fired a stop after "haan"
+  alone and the agent only ever saw an isolated, unconfirmable fragment — it escalated to a human
+  instead of booking. 0.7s survives that specific gap with a small margin.
+  - **Latency tradeoff, not free:** this delay sits *before* `VADUserStoppedSpeakingFrame` is even
+    created, so it is invisible to `TurnTracker`/`latency_report.py` — `speech_end` is stamped from
+    the frame's own creation timestamp, which is already `stop_secs` after the caller's last word.
+    Raising `stop_secs` from 0.2s to 0.7s adds ~0.5s of real, caller-perceived latency that Phase 4's
+    `reports/latency_phase4.md` numbers never counted. This is why the value is provisional: Phase
+    5's manual check (10 calls, 3 different people, recording awkward-pause Y/N) is what actually
+    tells us whether 0.7s is too long, too short, or right, not a unit test.
+  - `start_secs`/`confidence`/`min_volume` were left at Pipecat's defaults — no evidence from the
+    Phase 4 test pointed at them, so changing them without a reproduced problem would just be
+    guessing.
