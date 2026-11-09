@@ -39,7 +39,7 @@ def _scripted_responses() -> list[LLMResponse]:
 
 
 @pytest.mark.asyncio
-async def test_voice_frame_produces_same_tool_call_as_text_agent():
+async def test_voice_frame_produces_same_tool_call_as_text_agent(db):
     text_agent = Agent(FakeLLM(responses=_scripted_responses()), now=NOW, caller_phone="9829012345")
     expected_reply = await text_agent.handle_turn(
         "text-call", "Kal shaam ko cleaning ka slot milega?"
