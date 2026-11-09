@@ -1,7 +1,6 @@
 import pytest
 
 from app import booking
-from app.agent import LLMResponse
 from app.evals import (
     EVAL_NOW,
     EvalResult,
@@ -13,6 +12,7 @@ from app.evals import (
     render_report,
     run_all,
 )
+from app.llm_streaming import ChatDelta
 
 
 class TestEvalNow:
@@ -167,11 +167,11 @@ class _FlakyLLM:
     def __init__(self) -> None:
         self.call_count = 0
 
-    async def chat(self, messages, tools):
+    async def stream_chat(self, messages, tools):
         self.call_count += 1
         if self.call_count == 1:
             raise RuntimeError("boom")
-        return LLMResponse(content="Theek hai.")
+        yield ChatDelta(content="Theek hai.")
 
 
 class TestRunAllSurvivesAFlakyCase:
