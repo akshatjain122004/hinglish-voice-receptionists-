@@ -90,6 +90,13 @@ class SarvamLLMClient:
                     "messages": messages,
                     "tools": tools,
                     "stream": True,
+                    # BUILD_PLAN 5.7e: sarvam-105b's "hybrid thinking mode" is
+                    # on (reasoning_effort="low") by default, undocumented
+                    # anywhere in this project until now - every past request
+                    # silently paid its latency and token cost. Nothing here
+                    # needs multi-step reasoning (tool-calling and short
+                    # replies), so it's disabled outright, not tuned down.
+                    "reasoning_effort": None,
                 },
             ) as response,
         ):
@@ -117,9 +124,13 @@ class SarvamLLMClient:
 
         choices = chunk.get("choices") or []
         if not choices:
-            # Sarvam's documented stream_options.include_usage trailer chunk
-            # has an empty choices array - nothing to extract from it.
-            return None
+            # Sarvam's final streaming chunk carries `usage` with an empty
+            # `choices` array, sent automatically - no stream_options opt-in
+            # needed, unlike plain OpenAI (BUILD_PLAN 5.7a, verified against
+            # Sarvam's own docs). No other trailer shape is documented, so
+            # anything else with empty choices is skipped, same as before.
+            usage = chunk.get("usage")
+            return ChatDelta(usage=usage) if usage else None
 
         delta_obj = choices[0].get("delta") or {}
         tool_call_deltas = [
@@ -168,6 +179,7 @@ class Agent:
         on_tool_call: Callable[[str, dict[str, Any], dict[str, Any]], None] | None = None,
         on_reply_chunk: Callable[[str], Awaitable[None]] | None = None,
         on_slow_tool: Callable[[], Awaitable[None]] | None = None,
+        on_usage: Callable[[dict[str, int]], None] | None = None,
         caller_phone: str | None = None,
     ) -> str:
         caller_phone = caller_phone if caller_phone is not None else self.caller_phone
@@ -192,6 +204,8 @@ class Agent:
                     content_buffer += delta.content
                     if on_reply_chunk is not None and not saw_tool_call_delta:
                         await on_reply_chunk(delta.content)
+                if delta.usage is not None and on_usage is not None:
+                    on_usage(delta.usage)
 
             tool_calls = [
                 ToolCall(id=f.id, name=f.name, arguments=f.arguments) for f in accumulator.finish()

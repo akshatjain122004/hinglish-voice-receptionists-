@@ -260,6 +260,14 @@ class AgentProcessor(FrameProcessor):
                 if not self._interrupted:
                     await self.push_frame(TTSSpeakFrame(text=FILLER_TEXT), direction)
 
+            def on_usage(usage: dict[str, int]) -> None:
+                # BUILD_PLAN 5.7a: the latest round's usage wins if a turn
+                # has more than one (each tool-calling round has its own
+                # trailer) - that's the round whose generation is what
+                # llm_first_token/llm_latency_ms actually measured.
+                if self.turn_tracker is not None:
+                    self.turn_tracker.mark_usage(usage)
+
             turn_failed = False
             try:
                 reply = await self.agent.handle_turn(
@@ -268,6 +276,7 @@ class AgentProcessor(FrameProcessor):
                     on_tool_call=self.on_tool_call,
                     on_reply_chunk=on_reply_chunk,
                     on_slow_tool=on_slow_tool,
+                    on_usage=on_usage,
                 )
             except Exception:  # noqa: BLE001 - Sarvam's HTTP call is known-flaky
                 # (httpx.ReadTimeout etc.); any exception here must still close out

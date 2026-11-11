@@ -36,6 +36,12 @@ class TurnTimer:
     stt_final: float | None = None
     llm_first_token: float | None = None
     tts_first_audio: float | None = None
+    # Set from Sarvam's streaming usage trailer (BUILD_PLAN 5.7a), so the
+    # logged turn shows whether prompt size actually drives llm_latency_ms -
+    # and doubles as the per-call usage counters task 9.7's budget guard
+    # will need.
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
 
     def durations_ms(self) -> dict[str, float]:
         """Per-stage durations in milliseconds.
@@ -64,6 +70,8 @@ def turn_log_line(timer: TurnTimer, **extra: Any) -> str:
         "stt_final": timer.stt_final,
         "llm_first_token": timer.llm_first_token,
         "tts_first_audio": timer.tts_first_audio,
+        "prompt_tokens": timer.prompt_tokens,
+        "completion_tokens": timer.completion_tokens,
         **timer.durations_ms(),
         **extra,
     }
@@ -94,6 +102,10 @@ class TurnTracker:
 
     def mark_llm_first_token(self, now: float) -> None:
         self.timer.llm_first_token = now
+
+    def mark_usage(self, usage: dict[str, int]) -> None:
+        self.timer.prompt_tokens = usage.get("prompt_tokens")
+        self.timer.completion_tokens = usage.get("completion_tokens")
 
     def mark_tts_first_audio(self, now: float, **extra: Any) -> None:
         self.timer.tts_first_audio = now

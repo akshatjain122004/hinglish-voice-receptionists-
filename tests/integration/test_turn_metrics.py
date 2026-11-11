@@ -91,3 +91,34 @@ async def test_llm_first_token_marked_only_once_across_multiple_chunks():
 
     assert call_count == 1
     assert tracker.timer.llm_first_token is not None
+
+
+@pytest.mark.asyncio
+async def test_agent_processor_marks_usage_on_the_turn_tracker():
+    """BUILD_PLAN 5.7a: AgentProcessor wires Agent's on_usage into
+    TurnTracker.mark_usage - the pure mechanism is covered in
+    tests/unit/test_metrics.py and tests/integration/test_agent_flow.py,
+    this is the pipeline wiring."""
+    agent = Agent(
+        FakeLLM(
+            responses=[
+                [
+                    ChatDelta(content="Namaste!"),
+                    ChatDelta(usage={"prompt_tokens": 77, "completion_tokens": 3}),
+                ]
+            ]
+        ),
+        now=NOW,
+    )
+    tracker = TurnTracker()
+    processor = AgentProcessor(agent, turn_tracker=tracker)
+
+    await run_test(
+        processor,
+        frames_to_send=[
+            TranscriptionFrame(text="Namaste", user_id="caller", timestamp="2026-11-09T10:00:00Z")
+        ],
+    )
+
+    assert tracker.timer.prompt_tokens == 77
+    assert tracker.timer.completion_tokens == 3

@@ -5,9 +5,8 @@ up cold — a senior developer, a future version of the author, or Claude Code i
 session. It covers what the project is, what's been built, exactly how each piece was
 built (including the bugs hit and how they were fixed), what's known-broken or
 deferred, and what to do next. Written 2026-11-10, at the end of Phase 5's first two
-tasks (5.1 and 5.5); updated 2026-11-11 after tasks 5.2 (barge-in), 5.8 (STT noise),
-5.3 (silence handling), 5.4 (filler for slow tools) and 5.6 (spoken-output
-normalization) landed.
+tasks (5.1 and 5.5); updated 2026-11-11 after Phase 5's remaining tasks (5.2, 5.8,
+5.3, 5.4, 5.6, 5.9 and 5.7) all landed, completing every code task in the phase.
 
 Read this alongside `CLAUDE.md` (working conventions) and `docs/BUILD_PLAN.md` (the
 authoritative, task-by-task plan with its own close-out notes per task — this file
@@ -41,10 +40,11 @@ Caller → Twilio/Plivo (audio stream) → Pipecat pipeline → Silero VAD → S
 constraint — live API calls and evals cost real (small) amounts of money, so they're
 only run when explicitly asked for, never automatically.
 
-**Current phase:** Phase 5 (Hinglish + latency hardening), in progress. Tasks 5.1,
-5.5, 5.2 (barge-in), 5.8 (STT noise), 5.3 (silence handling), 5.4 (filler for slow
-tools) and 5.6 (spoken-output normalization) are done; 5.0 (housekeeping), 5.7, 5.9
-are not started yet. See §5.6 below for exactly where that stands.
+**Current phase:** Phase 5 (Hinglish + latency hardening), in progress. All nine
+code tasks (5.1-5.9) are done. Only 5.0 (housekeeping - the latency-report honesty
+fix and test-suite-budget check), the manual multi-person call checks, and the
+eval-related tasks (5.10, 5.11) remain before the phase's gate can be assessed. See
+§5.6 below for exactly where that stands.
 
 ---
 
@@ -367,7 +367,7 @@ remaining action item to close Phase 4's gate.
 silence, good at language-mixing. Gate: p50 ≤1.5s / p95 ≤2.5s turn latency, ≥9/10
 manual calls book correctly, barge-in + silence tests pass, eval pass rate ≥85%.
 
-Nine tasks total (5.1–5.9). **Eight done so far: 5.5, 5.1, 5.2, 5.8, 5.3, 5.4, 5.6 and 5.9**,
+Nine tasks total (5.1–5.9). **All nine done: 5.5, 5.1, 5.2, 5.8, 5.3, 5.4, 5.6, 5.9 and 5.7**,
 following
 BUILD_PLAN.md's own recommended order (`5.0 → 5.2 → 5.8 → 5.3 → 5.4 → 5.6 → 5.9 → 5.7
 → 5.11 → 5.10`) from 5.2 onward; 5.5 and 5.1 landed earlier, before that order was
@@ -840,15 +840,79 @@ full-suite run.
 **Not done here, out of scope per this task's own plan notes:** the Phase 9
 dashboard's "Callback requests" page and Phase 6's optional WhatsApp-the-owner hook.
 
-#### Remaining Phase 5 tasks (not started)
+#### Task 5.7 — Shorten the prompt and cut LLM TTFT — ✅ Done
 
-- **5.7 — Shorten + cache the system prompt** to reduce LLM time-to-first-token.
+**Goal:** measure first, then shorten the prompt and investigate whether prompt
+caching or a reasoning-mode toggle can cut time-to-first-token.
+
+**Researched (b) prompt caching and (e) a reasoning/thinking toggle against
+Sarvam's own docs first, as the plan asks — both turned up real findings:**
+- **sarvam-105b's "hybrid thinking mode" has been on by default this entire
+  project, completely undocumented until now.** `reasoning_effort` defaults
+  server-side to `"low"`, not off; reasoning tokens "count toward your completion
+  tokens and bill," and stream *before* any real content. Every request Phases 2-5
+  ever made silently paid this latency and cost. Fixed by sending
+  `"reasoning_effort": None` explicitly — omitting the field is not the same as
+  disabling it; only an explicit `null` turns it off.
+- **Sarvam's chat completions API has no prompt-caching parameter at all** — the
+  "cache" half of this task is dropped, exactly as the plan says to do when this is
+  the answer. Nothing built, nothing to maintain.
+- **A second finding fell out of the same research pass:** Sarvam's streaming API
+  sends a usage trailer chunk (`prompt_tokens`/`completion_tokens`) automatically on
+  every request, no opt-in needed (unlike plain OpenAI) — and `SarvamLLMClient`
+  was already *receiving* it and silently discarding it (an existing test's own
+  assertion proved this). Logging prompt token count (task (a)) needed no new
+  request parameter at all, just reading data already arriving on the wire.
+
+**What got built:**
+- `app/llm_streaming.py`: `ChatDelta` gained a `usage: dict[str, int] | None` field.
+- `app/agent.py`: `Agent.handle_turn(..., on_usage=...)` fires once per round with
+  usage data (every round now, since it's parsed); a later round's call overwrites
+  an earlier one's effect on purpose, since the *last* round is the one whose
+  generation `llm_first_token`/`llm_latency_ms` actually measured.
+- `app/metrics.py`: `TurnTimer.prompt_tokens`/`completion_tokens`,
+  `TurnTracker.mark_usage()`, logged in every turn's JSON line. These double as
+  exactly the per-call usage counters Phase 9 task 9.7's budget guard will need —
+  one mechanism serves both, no extra plumbing later.
+- `app/voice_bot.py`: `AgentProcessor` wires `on_usage` into
+  `self.turn_tracker.mark_usage`.
+- `app/prompts.py`: the "spoken numbers" sub-clause removed outright (100%
+  redundant now that 5.6's `normalise_for_speech` rewrites digits regardless of
+  what the model writes); a short-first-sentence instruction added ("Open with a
+  short acknowledgment... before the main point").
+- **The phone-handling line was shortened, not deleted — a deliberate departure
+  from the task's literal wording.** Code enforcement (ignoring a hallucinated
+  phone argument, since Phase 2) only protects a *tool call* from the wrong number;
+  it does nothing to stop the model from pointlessly *asking* the caller for it in
+  conversation, which the prompt line is the only thing preventing. Kept the
+  guidance, shortened the wording — confirmed the existing dedicated unit test for
+  this rule (`test_build_system_prompt_never_asks_for_the_phone_number`) still
+  passes.
+- **(f) deliberately not acted on:** no real call has happened since (a)'s logging
+  landed, so there's no data yet showing history growth matters. Capping it now
+  would be guessing — revisit once real `prompt_tokens` numbers exist across a long
+  call.
+
+**Tests needed updating for a deliberate behavior change, not a bug fix:**
+`test_stream_chat_skips_done_and_empty_choices_trailer` asserted the old behavior
+(usage trailer silently dropped) — rewritten to assert the new one, plus a new test
+for a usage-less empty-choices chunk (still skipped) and one confirming
+`reasoning_effort: null` is actually sent. New tests across
+`test_sarvam_llm_client.py`, `test_agent_flow.py`, `test_metrics.py` and
+`test_turn_metrics.py` (pipeline wiring).
+
+**Final state:** 340 tests passing, `ruff check`/`ruff format` clean.
+
+#### Phase 5: all nine tasks now done
 
 **Phase 5's complete-when gate** (not yet met): p50 ≤1.5s / p95 ≤2.5s turn latency,
 ≥9/10 manual calls book correctly, barge-in + silence tests pass, eval pass rate
 ≥85%. The latency numbers haven't been re-measured since 5.1 landed — that's a
-natural next step once a few more tasks are in, to see how much the streaming work
-actually moved the needle versus Phase 4's baseline.
+natural next step now that every code task is in, to see how much the streaming
+work (5.1), the VAD tuning (5.5) and this session's reasoning-mode fix (5.7) moved
+the needle versus Phase 4's baseline. The remaining gate items are 5.11 (5 new
+code-switching eval cases), 5.10 (the eval-debt pass), and the manual multi-person
+call checks — all still ahead, per BUILD_PLAN's recommended order.
 
 ### 5.6 — Phases 6–10 — ⬜ Not started
 

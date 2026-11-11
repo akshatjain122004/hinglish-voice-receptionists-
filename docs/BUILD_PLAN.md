@@ -1044,13 +1044,72 @@ pause Y/N) to confirm it's not now *too* long; no unit test can validate that tr
   - **Not done here, explicitly out of scope per this task's own notes above:** the Phase 9
     dashboard's "Callback requests" page and Phase 6's optional WhatsApp-the-owner hook.
 
-- [ ] 5.7 **Shorten the system prompt and cut LLM time-to-first-token.** Measure first, then change.
+- [x] 5.7 **Shorten the system prompt and cut LLM time-to-first-token.** Measure first, then change.
   - a. Log prompt token count next to `llm_latency_ms` per turn, so you can see whether prompt size actually drives TTFT.
   - b. **Check whether Sarvam's API supports prompt caching at all.** If it doesn't, drop the "cache" half of this task and write that down. Don't build a cache the provider can't use.
   - c. Shorten the prompt: remove rules that are now enforced in code (spoken numbers after 5.6, phone handling since Phase 2). Keep every non-negotiable rule.
   - d. Ask for a **short first sentence** ("Ji, dekh leti hoon.") so the first TTS clip is small and starts sooner. With HTTP TTS, the first sentence's length directly sets first-audio time.
   - e. Check whether `sarvam-105b` has a reasoning/"thinking" setting that adds TTFT and whether it can be turned off for this use (verify in Sarvam's docs).
   - f. Watch history growth on long calls (more turns means a longer prompt and slower TTFT). Only cap it if the data from (a) shows it matters.
+
+  **Researched (b) and (e) against Sarvam's own docs before writing any code, as asked — both turned
+  up real, actionable findings, not "nothing to report":**
+  - **(e) sarvam-105b's "hybrid thinking mode" was on by default the entire project, completely
+    undocumented anywhere in this codebase until now.** `reasoning_effort` defaults server-side to
+    `"low"` — not off — and Sarvam's docs are explicit that "reasoning tokens... count toward your
+    completion tokens and bill" and "thinking tokens stream first via `delta.reasoning_content`"
+    *before* any real content. Every request this project has ever made (Phases 2-5) silently paid
+    this latency and token cost. Disabled outright by sending `"reasoning_effort": None` explicitly
+    (confirmed from the docs: omitting the field defaults to `"low"`; sending `null` is what turns it
+    off) — nothing here needs multi-step reasoning, so "low" vs "off" was never a real tradeoff to
+    tune.
+  - **(b) Sarvam's chat completions API has no prompt-caching parameter at all** (checked both the
+    general API guide and the model-specific page) — the "cache" half of this task is dropped, as the
+    plan itself says to do when this is the answer. Nothing built, nothing to maintain.
+  - **(a) turned up a second, related finding while researching usage data:** Sarvam's streaming API
+    sends a final trailer chunk carrying real `usage` (`prompt_tokens`/`completion_tokens`) data
+    **automatically on every request** — no `stream_options.include_usage` opt-in needed, unlike plain
+    OpenAI. `SarvamLLMClient._parse_sse_line` was already *receiving* this chunk and silently
+    discarding it (confirmed by an existing test's own assertion that it produced no delta) — the
+    token-count logging this task asks for needed no new request parameter, just actually reading data
+    already arriving on the wire.
+  - `app/llm_streaming.py`: `ChatDelta` gained a `usage: dict[str, int] | None` field.
+  - `app/agent.py`: `Agent.handle_turn(..., on_usage=...)` fires once per round that returns usage data
+    (every round does, now that it's parsed) with that round's `{"prompt_tokens", "completion_tokens"}`.
+    A later round's call overwrites an earlier one's effect downstream — by design: the *last* round
+    is the one whose generation `llm_first_token`/`llm_latency_ms` actually measured, so its prompt
+    size is the one worth correlating against TTFT.
+  - `app/metrics.py`: `TurnTimer` gained `prompt_tokens`/`completion_tokens`; `TurnTracker.mark_usage()`
+    sets them (reset to `None` on the next turn's `mark_speech_end`, same lifecycle as every other
+    field); `turn_log_line()` includes them in every logged turn. These are also exactly the per-call
+    usage counters task 9.7's budget guard will need later — one mechanism serves both.
+  - `app/voice_bot.py`: `AgentProcessor` wires `on_usage` straight into `self.turn_tracker.mark_usage`.
+  - **(c) Shortened the prompt, but kept more than the task's literal wording suggested, on purpose:**
+    the "spoken numbers" sub-clause (`"saade paanch baje"... never digits...`) was removed outright —
+    100% redundant now that 5.6's `normalise_for_speech` rewrites digits regardless of what the model
+    writes, so the spoken OUTPUT is identical whether this line stays or goes. The phone-handling line
+    was **not** deleted, only shortened — unlike spoken numbers, code enforcement there (ignoring any
+    phone argument the model might hallucinate, since Phase 2) only protects against a *tool call*
+    carrying the wrong number; it does nothing to stop the model from pointlessly *asking* the caller
+    for it in conversation, which the prompt line is the only thing preventing. Kept the guidance,
+    shortened the wording, instead of deleting it on the strength of a plan phrase that turned out to
+    be imprecise for this one line — confirmed `tests/unit/test_prompts.py`'s existing dedicated test
+    for this rule still passes.
+  - **(d)** Added: "Open with a short acknowledgment (e.g. 'Ji, dekh leti hoon.') before the main
+    point, so the caller hears something quickly." — folded into the existing "Length" instruction
+    rather than a new paragraph, since it's the same sentence-shape guidance.
+  - **(f) Deliberately not acted on.** No real call has happened since (a)'s logging landed, so there's
+    no data yet showing history growth actually matters — capping it now would be guessing, which the
+    task's own "measure first, then change" framing rules out. Revisit once real `prompt_tokens`
+    numbers exist across a long call.
+  - **A real behavior change required updating existing tests, not bugs being papered over:**
+    `test_stream_chat_skips_done_and_empty_choices_trailer` asserted the *old* behavior (usage trailer
+    silently dropped) — renamed and rewritten to assert the new, deliberate one, plus a new test for a
+    usage-less empty-choices chunk (still skipped) and one confirming `reasoning_effort: null` is sent.
+  - Tests: the three `test_sarvam_llm_client.py` cases above, `test_on_usage_fires_with_the_final_rounds_usage`
+    in `test_agent_flow.py`, four new `TestTurnTrackerUsage`/`turn_log_line` cases in `test_metrics.py`,
+    and a pipeline-wiring test in `test_turn_metrics.py`.
+  - Full offline suite: 340 passed, `ruff check`/`ruff format` clean.
 
 - [ ] 5.11 **Add 5 code-switching eval cases** to `test_calls.yaml` (e.g. "mujhe tomorrow evening ka appointment chahiye, cleaning ke liye"). This happens before 5.10's live run, so one paid run covers both.
 

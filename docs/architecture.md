@@ -234,3 +234,30 @@ Design choices and discoveries worth remembering, added as phases progress.
     number-word style to use for a sentence), not general language identification -
     Devanagari script, or any of ~45 common Hindi/Hinglish marker words (reusing
     `app.timeparse`'s own vocabulary), else English.
+- **5.7: sarvam-105b's reasoning mode was on by default, this whole project, undocumented.**
+  Researched against Sarvam's own docs (not guessed) before writing any code: `reasoning_effort`
+  defaults server-side to `"low"` - not off - and reasoning tokens "count toward your completion
+  tokens and bill," streaming first via `delta.reasoning_content` *before* any real content. Every
+  request this project has ever made silently paid that latency and cost. Fixed by sending
+  `"reasoning_effort": None` explicitly in `SarvamLLMClient.stream_chat()`'s request body - omitting
+  the field is not the same as disabling it; Sarvam's default only turns off on an explicit `null`.
+  - **Sarvam's API has no prompt-caching parameter at all** (checked both the general chat-completions
+    guide and the model-specific page) - the "cache" half of this task is dropped, per the plan's own
+    instruction for exactly this outcome.
+  - **A second finding fell out of the same research pass:** Sarvam's streaming API sends a usage
+    trailer chunk (`prompt_tokens`/`completion_tokens`) automatically on every request, no
+    `stream_options.include_usage` opt-in needed (unlike OpenAI) - `SarvamLLMClient._parse_sse_line`
+    was already receiving this chunk and silently discarding it (an existing test's own assertion
+    proved it produced no delta). `ChatDelta` gained a `usage` field; `Agent.handle_turn(...,
+    on_usage=...)` forwards each round's usage (a later round's call overwrites an earlier one's
+    effect on purpose - the *last* round is the one whose generation `llm_first_token` actually
+    measured); `TurnTracker.mark_usage()`/`TurnTimer.prompt_tokens`/`completion_tokens` log it next to
+    every turn. These double as exactly the per-call usage counters task 9.7's budget guard will need
+    later.
+  - **Prompt shortening kept more than the task's literal wording suggested, deliberately.** The
+    "spoken numbers" sub-clause was removed outright - 100% redundant now that 5.6's
+    `normalise_for_speech` rewrites digits regardless of what the model writes. The phone-handling
+    line was **shortened, not deleted**: code enforcement (ignoring a hallucinated phone argument,
+    since Phase 2) only protects a tool call from the wrong number, it does nothing to stop the model
+    asking the caller for it in conversation - the prompt line is the only thing preventing that, so
+    it stayed, just terser.

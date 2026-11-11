@@ -30,10 +30,20 @@ class ToolCallDelta:
 
 @dataclass
 class ChatDelta:
-    """One chunk of a streamed chat completion."""
+    """One chunk of a streamed chat completion.
+
+    `usage` is only set on a provider's final trailer chunk (e.g. Sarvam's,
+    which sends one automatically on every streaming request, no opt-in
+    needed): `{"prompt_tokens": ..., "completion_tokens": ..., "total_tokens":
+    ...}`. That chunk carries no content or tool-call data, so a delta with
+    `usage` set is otherwise empty (BUILD_PLAN 5.7a - logging prompt size
+    next to llm_latency_ms, to see whether it actually drives
+    time-to-first-token).
+    """
 
     content: str | None = None
     tool_call_deltas: list[ToolCallDelta] = field(default_factory=list)
+    usage: dict[str, int] | None = None
 
 
 @dataclass

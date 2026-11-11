@@ -248,3 +248,43 @@ async def test_on_reply_chunk_is_suppressed_once_a_tool_call_delta_is_seen(db):
 
     assert seen == ["Kal yeh slots free hain."]
     assert reply == "Kal yeh slots free hain."
+
+
+@pytest.mark.asyncio
+async def test_on_usage_fires_with_the_final_rounds_usage():
+    """BUILD_PLAN 5.7a: each round's stream_chat() ends with its own usage
+    chunk (merged here as a plain ChatDelta - see test_sarvam_llm_client.py
+    for the real parsing); a turn with more than one round should report the
+    *last* round's usage, since that's the generation llm_first_token
+    actually timed."""
+    fake = FakeLLM(
+        responses=[
+            [
+                ChatDelta(
+                    tool_call_deltas=[
+                        ToolCallDelta(
+                            index=0,
+                            id="call_1",
+                            name="check_slots",
+                            arguments_fragment='{"date": "kal", "service": "cleaning"}',
+                        )
+                    ]
+                ),
+                ChatDelta(usage={"prompt_tokens": 100, "completion_tokens": 5}),
+            ],
+            [
+                ChatDelta(content="Kal yeh slots free hain."),
+                ChatDelta(usage={"prompt_tokens": 150, "completion_tokens": 8}),
+            ],
+        ]
+    )
+    agent = Agent(fake, now=NOW)
+    seen: list[dict] = []
+
+    reply = await agent.handle_turn("call-8", "kal slot hai?", on_usage=seen.append)
+
+    assert seen == [
+        {"prompt_tokens": 100, "completion_tokens": 5},
+        {"prompt_tokens": 150, "completion_tokens": 8},
+    ]
+    assert reply == "Kal yeh slots free hain."

@@ -6,6 +6,7 @@ from loguru import logger
 from app import metrics
 from app.metrics import (
     TurnTimer,
+    TurnTracker,
     configure_file_sink,
     ensure_file_sink,
     latency_summary,
@@ -56,6 +57,63 @@ def test_turn_log_line_is_valid_json_with_timestamps_durations_and_extra_fields(
     assert data["llm_first_token"] == 101.0
     assert data["tts_first_audio"] == 101.5
     assert data["total_latency_ms"] == pytest.approx(1500.0)
+
+
+def test_turn_log_line_includes_prompt_and_completion_tokens():
+    """BUILD_PLAN 5.7a: logged next to llm_latency_ms, to see whether prompt
+    size actually drives time-to-first-token."""
+    timer = TurnTimer(speech_end=100.0, prompt_tokens=120, completion_tokens=18)
+
+    data = json.loads(turn_log_line(timer))
+
+    assert data["prompt_tokens"] == 120
+    assert data["completion_tokens"] == 18
+
+
+def test_turn_log_line_tokens_are_none_when_never_marked():
+    data = json.loads(turn_log_line(TurnTimer()))
+
+    assert data["prompt_tokens"] is None
+    assert data["completion_tokens"] is None
+
+
+class TestTurnTrackerUsage:
+    def test_mark_usage_sets_prompt_and_completion_tokens(self):
+        tracker = TurnTracker()
+
+        tracker.mark_usage({"prompt_tokens": 90, "completion_tokens": 12})
+
+        assert tracker.timer.prompt_tokens == 90
+        assert tracker.timer.completion_tokens == 12
+
+    def test_mark_usage_tolerates_a_usage_dict_missing_a_key(self):
+        """Sarvam's own documented trailer ({"total_tokens": N} alone) has
+        been seen without prompt_tokens/completion_tokens in earlier
+        testing - this must not raise."""
+        tracker = TurnTracker()
+
+        tracker.mark_usage({"total_tokens": 50})
+
+        assert tracker.timer.prompt_tokens is None
+        assert tracker.timer.completion_tokens is None
+
+    def test_later_round_usage_overwrites_an_earlier_rounds(self):
+        tracker = TurnTracker()
+
+        tracker.mark_usage({"prompt_tokens": 100, "completion_tokens": 5})
+        tracker.mark_usage({"prompt_tokens": 150, "completion_tokens": 8})
+
+        assert tracker.timer.prompt_tokens == 150
+        assert tracker.timer.completion_tokens == 8
+
+    def test_mark_speech_end_resets_usage_for_the_new_turn(self):
+        tracker = TurnTracker()
+        tracker.mark_usage({"prompt_tokens": 100, "completion_tokens": 5})
+
+        tracker.mark_speech_end(200.0)
+
+        assert tracker.timer.prompt_tokens is None
+        assert tracker.timer.completion_tokens is None
 
 
 class TestPercentile:

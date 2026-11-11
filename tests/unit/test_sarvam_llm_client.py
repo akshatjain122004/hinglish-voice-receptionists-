@@ -92,10 +92,39 @@ async def test_stream_chat_parses_fragmented_tool_call_deltas():
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_stream_chat_skips_done_and_empty_choices_trailer():
+async def test_stream_chat_skips_done_but_captures_the_usage_trailer():
+    """BUILD_PLAN 5.7a: Sarvam's final chunk carries `usage` (prompt/completion
+    token counts) with an empty `choices` array - this is no longer silently
+    dropped, it becomes a `ChatDelta(usage=...)` so `Agent.handle_turn()` can
+    forward it to a turn's metrics."""
     body = _sse(
         json.dumps({"choices": [{"delta": {"content": "ok"}}]}),
-        json.dumps({"choices": [], "usage": {"total_tokens": 10}}),
+        json.dumps(
+            {"choices": [], "usage": {"prompt_tokens": 42, "completion_tokens": 8, "total_tokens": 50}}
+        ),
+        "[DONE]",
+    )
+    respx.post("https://api.sarvam.ai/v2/chat/completions").mock(
+        return_value=httpx.Response(200, text=body)
+    )
+    client = SarvamLLMClient(api_key="fake-key")
+
+    deltas = [
+        d async for d in client.stream_chat(messages=[{"role": "user", "content": "hi"}], tools=[])
+    ]
+
+    assert deltas == [
+        ChatDelta(content="ok"),
+        ChatDelta(usage={"prompt_tokens": 42, "completion_tokens": 8, "total_tokens": 50}),
+    ]
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_stream_chat_skips_an_empty_choices_chunk_with_no_usage():
+    body = _sse(
+        json.dumps({"choices": [{"delta": {"content": "ok"}}]}),
+        json.dumps({"choices": []}),
         "[DONE]",
     )
     respx.post("https://api.sarvam.ai/v2/chat/completions").mock(
@@ -195,3 +224,8 @@ async def test_stream_chat_sends_stream_true_and_auth_headers():
     assert body["model"] == "sarvam-105b"
     assert body["tools"] == [{"type": "function"}]
     assert body["stream"] is True
+    # BUILD_PLAN 5.7e: sarvam-105b's hybrid thinking mode defaults to "on"
+    # (reasoning_effort="low") server-side; explicitly sending `null` (not
+    # just omitting the field) is what disables it.
+    assert "reasoning_effort" in body
+    assert body["reasoning_effort"] is None
