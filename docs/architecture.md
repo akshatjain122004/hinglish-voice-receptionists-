@@ -166,3 +166,25 @@ Design choices and discoveries worth remembering, added as phases progress.
   vowel signs and the candrabindu (the combining marks inside "हाँ") are category
   `Mc`/`Mn`, which `.isalnum()` treats as non-alphanumeric and would strip away,
   undercounting a real short Hindi "yes" and wrongly dropping it as noise.
+- **5.3: Silence handling needed a dedicated processor, not Pipecat's `UserIdleController`.**
+  That controller is the right shape (starts on `BotStoppedSpeakingFrame`, cancels on
+  `BotStartedSpeakingFrame`/`UserStartedSpeakingFrame`, suppressed during
+  `FunctionCallsStartedFrame`) but it's wired to Pipecat's native turn-taking/function-calling
+  frame vocabulary, which this pipeline doesn't produce (the Phase 4 decision keeps tool-calling
+  inside `Agent`, not a native Pipecat LLM service - see above). `SilenceProcessor` (`app/voice_bot.py`)
+  uses this pipeline's actual frames instead: `LLMFullResponseStartFrame`/`LLMFullResponseEndFrame`
+  (already pushed by `AgentProcessor` every turn) track whether a turn is in progress, and
+  `VADUserStartedSpeakingFrame` resets it on caller speech. Tracking turn-in-progress this way,
+  rather than just "was the bot silent for N seconds," is what keeps the timer from firing between
+  two TTS clips of the *same* multi-sentence streamed reply, not only during a slow tool call.
+  Reprompt/goodbye are pushed as `TTSSpeakFrame`s - Pipecat's primitive for "speak this now,
+  independent of any LLM turn" - so neither touches `Agent`'s history.
+  - **`end_call()` as a late-bound closure.** It needs `WorkerRunner`, which doesn't exist yet when
+    `build_pipeline()` is called in `run_bot()`; solved with a closure over a `runner` variable
+    assigned a few lines later (standard Python late-binding - `end_call()` is only ever actually
+    invoked long after `runner` holds the real object).
+  - **`CallLogger.end()` is now idempotent.** `end_call()` logs `outcome="dropped"` and cancels the
+    runner, which tears down the transport and would otherwise trigger the existing
+    `on_client_disconnected` handler's own `call_logger.end()` right after - silently overwriting
+    the dropped outcome with the default `""`. Guarding `end()` to no-op once `ended_at` is already
+    set fixes this for any future double-end path too, not just this one.

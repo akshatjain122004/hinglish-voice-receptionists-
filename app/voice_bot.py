@@ -16,9 +16,10 @@ tests/integration/test_voice_text_equivalence.py).
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -30,6 +31,8 @@ from loguru import logger
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.frames.frames import (
+    BotStartedSpeakingFrame,
+    BotStoppedSpeakingFrame,
     Frame,
     InterruptionFrame,
     LLMFullResponseEndFrame,
@@ -37,6 +40,7 @@ from pipecat.frames.frames import (
     TextFrame,
     TranscriptionFrame,
     TTSAudioRawFrame,
+    TTSSpeakFrame,
     TTSStartedFrame,
     VADUserStartedSpeakingFrame,
     VADUserStoppedSpeakingFrame,
@@ -60,6 +64,14 @@ from app.stt_noise import is_noise
 
 OnToolCall = Callable[[str, dict[str, Any], dict[str, Any]], None]
 OnTurn = Callable[[str, str], None]
+EndCall = Callable[[], Awaitable[None]]
+
+# BUILD_PLAN 5.3: after this many seconds of the bot waiting (not thinking,
+# not speaking) for the caller to say something, SilenceProcessor reprompts
+# once, then ends the call after a second silent window of the same length.
+SILENCE_TIMEOUT_SECS = 5.0
+SILENCE_REPROMPT_TEXT = "Hello, kya aap line par hain?"
+SILENCE_GOODBYE_TEXT = "Theek hai, main call band kar rahi hoon. Dhanyavaad, alvida!"
 
 CLINIC_PATH = Path(__file__).resolve().parent.parent / "data" / "clinic.yaml"
 
@@ -126,6 +138,13 @@ class CallLogger:
             raise RuntimeError("CallLogger.end called before start()")
         with get_session() as session:
             entry = session.get(CallLog, self.log_id)
+            if entry.ended_at is not None:
+                # Already ended - e.g. SilenceProcessor's end_call() already
+                # logged outcome="dropped" and is now tearing down the
+                # transport, which would otherwise trigger the normal
+                # on_client_disconnected handler's end() right after and
+                # silently overwrite that outcome with the default "".
+                return
             entry.ended_at = now or datetime.now(UTC)
             entry.outcome = outcome
             session.add(entry)
@@ -282,6 +301,97 @@ class BargeInProcessor(FrameProcessor):
         await self.push_frame(frame, direction)
 
 
+class SilenceProcessor(FrameProcessor):
+    """Reprompts after ~5s of silence, then ends the call after a second one.
+
+    Placed after `AgentProcessor` and before `tts` in `build_pipeline()`: it
+    needs `LLMFullResponseStartFrame`/`LLMFullResponseEndFrame` (pushed
+    downstream by `AgentProcessor`) to know when a turn - including every TTS
+    clip of a multi-sentence streamed reply, not just the first - has
+    actually finished, and `BotStartedSpeakingFrame`/`BotStoppedSpeakingFrame`
+    (emitted upstream *and* downstream by the base output transport, so they
+    reach every earlier pipeline stage regardless of this processor's exact
+    position) to know when the bot is actually making sound.
+
+    The timer only ever starts on a `BotStoppedSpeakingFrame` that arrives
+    while no turn is in progress - this is what keeps it from firing while
+    the agent is thinking or running a slow tool (e.g. `answer_faq`'s
+    embedding lookup), or during the gap between two TTS clips of the same
+    streamed reply: both of those are "bot stopped speaking" moments that
+    happen *before* `LLMFullResponseEndFrame`, so `_turn_in_progress` is still
+    True and no timer starts.
+    """
+
+    def __init__(
+        self,
+        *,
+        silence_timeout: float = SILENCE_TIMEOUT_SECS,
+        reprompt_text: str = SILENCE_REPROMPT_TEXT,
+        goodbye_text: str = SILENCE_GOODBYE_TEXT,
+        end_call: EndCall | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(**kwargs)
+        self._silence_timeout = silence_timeout
+        self._reprompt_text = reprompt_text
+        self._goodbye_text = goodbye_text
+        self._end_call = end_call
+        self._turn_in_progress = False
+        self._reprompted = False
+        self._timer_task: asyncio.Task | None = None
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
+        await super().process_frame(frame, direction)
+
+        if isinstance(frame, LLMFullResponseStartFrame):
+            self._turn_in_progress = True
+            await self._cancel_timer()
+        elif isinstance(frame, LLMFullResponseEndFrame):
+            self._turn_in_progress = False
+        elif isinstance(frame, BotStartedSpeakingFrame):
+            await self._cancel_timer()
+        elif isinstance(frame, BotStoppedSpeakingFrame):
+            if not self._turn_in_progress:
+                await self._start_timer()
+        elif isinstance(frame, VADUserStartedSpeakingFrame):
+            # The caller proved they're on the line - any *future* silence
+            # starts fresh from the first warning, not straight to goodbye.
+            self._reprompted = False
+            await self._cancel_timer()
+
+        await self.push_frame(frame, direction)
+
+    async def cleanup(self) -> None:
+        await self._cancel_timer()
+        await super().cleanup()
+
+    async def _start_timer(self) -> None:
+        await self._cancel_timer()
+        self._timer_task = self.create_task(self._timer_handler())
+
+    async def _cancel_timer(self) -> None:
+        if self._timer_task is not None:
+            await self.cancel_task(self._timer_task)
+            self._timer_task = None
+
+    async def _timer_handler(self) -> None:
+        await asyncio.sleep(self._silence_timeout)
+        self._timer_task = None
+        if not self._reprompted:
+            # First silent window: reprompt, then arm a second, identical
+            # window - if the caller still says nothing, the *next* expiry
+            # ends the call. Pushed as a TTSSpeakFrame, not through the LLM,
+            # so it's never added to Agent's history (BUILD_PLAN 5.3).
+            self._reprompted = True
+            await self.push_frame(
+                TTSSpeakFrame(text=self._reprompt_text), FrameDirection.DOWNSTREAM
+            )
+        else:
+            await self.push_frame(TTSSpeakFrame(text=self._goodbye_text), FrameDirection.DOWNSTREAM)
+            if self._end_call is not None:
+                await self._end_call()
+
+
 class TTSLatencyMarker(FrameProcessor):
     """Marks the first TTS audio byte of a turn, and logs the completed turn.
 
@@ -321,13 +431,17 @@ def build_pipeline(
     on_tool_call: OnToolCall | None = None,
     on_turn: OnTurn | None = None,
     turn_tracker: TurnTracker | None = None,
+    end_call: EndCall | None = None,
 ) -> Pipeline:
     """Assembles the voice pipeline in the BUILD_PLAN's stage order.
 
     `BargeInProcessor` sits right after VAD (BUILD_PLAN 5.2), so a caller
     interruption is broadcast before STT/the agent/TTS ever see the frame
-    that triggered it. `TTSLatencyMarker` is only added when `turn_tracker`
-    is given, since it's the thing that needs one to do anything.
+    that triggered it. `SilenceProcessor` (BUILD_PLAN 5.3) sits right after
+    `AgentProcessor`, since it needs to see `LLMFullResponseStartFrame`/
+    `LLMFullResponseEndFrame` to know when a turn is actually finished.
+    `TTSLatencyMarker` is only added when `turn_tracker` is given, since it's
+    the thing that needs one to do anything.
     """
     stages = [
         transport.input(),
@@ -341,6 +455,7 @@ def build_pipeline(
             on_turn=on_turn,
             turn_tracker=turn_tracker,
         ),
+        SilenceProcessor(end_call=end_call),
         tts,
     ]
     if turn_tracker is not None:
@@ -382,6 +497,19 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
     call_logger = CallLogger(caller=runner_args.session_id)
     call_logger.start()
     turn_tracker = TurnTracker()
+    runner: WorkerRunner | None = None  # assigned below; end_call() closes over it
+
+    async def end_call() -> None:
+        """BUILD_PLAN 5.3: hung up after a second silent window.
+
+        A single hook so Phase 8's Twilio transport can later plug in a real
+        hang-up (task 8.5) without SilenceProcessor's timer logic changing at
+        all - here, "ending the call" just means logging the outcome and
+        cancelling this call's own worker/runner.
+        """
+        call_logger.end(outcome="dropped")
+        if runner is not None:
+            await runner.cancel()
 
     async with aiohttp.ClientSession() as session:
         stt = SarvamSTTService(api_key=settings.sarvam_api_key, mode="codemix")
@@ -401,6 +529,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
             session_id=runner_args.session_id,
             on_turn=call_logger.record_turn,
             turn_tracker=turn_tracker,
+            end_call=end_call,
         )
 
         worker = PipelineWorker(pipeline, params=PipelineParams())

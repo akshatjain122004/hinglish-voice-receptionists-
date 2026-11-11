@@ -839,11 +839,60 @@ pause Y/N) to confirm it's not now *too* long; no unit test can validate that tr
     cough-during-barge-in limitation noted above is unchanged by this task, as planned — tracked in
     the manual-calls table further down, not built around here.
 
-- [ ] 5.3 **Silence handling:** after ~5 s of silence, say "Hello, kya aap line par hain?" After a second silence, say goodbye and end the session.
+- [x] 5.3 **Silence handling:** after ~5 s of silence, say "Hello, kya aap line par hain?" After a second silence, say goodbye and end the session.
   - The silence timer starts when the **bot finishes speaking** (`BotStoppedSpeakingFrame`) and resets when the caller starts speaking. It must **never** run while the agent is thinking or running a tool, or a slow `answer_faq` would trigger "are you there?" mid-answer.
   - Reprompt and goodbye are fixed phrases pushed straight to TTS. They don't go through the LLM and aren't added to the agent's history.
   - End the session through a single `end_call()` hook, so Phase 8 can plug in the Twilio hang-up (8.5) without touching this logic. Log `outcome = "dropped"` to `CallLog`.
   - Before writing your own timer, check whether Pipecat 1.15.0's user-idle processor (if it has one) already does this.
+
+  **Checked Pipecat's built-in idle machinery first, as asked, and it doesn't fit:** Pipecat 1.15.0
+  has both `IdleFrameProcessor` (generic "no activity of type X for N seconds" callback) and
+  `UserIdleController` (purpose-built for exactly this: starts on `BotStoppedSpeakingFrame`,
+  cancels on `BotStartedSpeakingFrame`/`UserStartedSpeakingFrame`, suppressed during
+  `FunctionCallsStartedFrame`). The controller is the right *shape*, but it's wired into Pipecat's
+  native turn-taking/function-calling frame vocabulary (`UserStartedSpeakingFrame`,
+  `FunctionCallsStartedFrame`) — this project deliberately doesn't use those (the documented Phase 4
+  decision to keep tool-calling inside `Agent`, not a native Pipecat LLM service), so those frames
+  never flow through this pipeline and the controller's cancel-on-caller-speech and
+  suppress-during-tool-call logic would silently never fire. Built a small dedicated
+  `SilenceProcessor` instead, using this pipeline's *actual* frame vocabulary
+  (`VADUserStartedSpeakingFrame`, and `LLMFullResponseStartFrame`/`LLMFullResponseEndFrame` — the
+  frames `AgentProcessor` already pushes around every turn, including multi-sentence streamed
+  replies — instead of `FunctionCallsStartedFrame`).
+  - `SilenceProcessor` (`app/voice_bot.py`), inserted between `AgentProcessor` and `tts`: starts the
+    timer on `BotStoppedSpeakingFrame` only when no turn is in progress (tracked via
+    `LLMFullResponseStartFrame`/`EndFrame` — this is what keeps it from firing between two TTS clips
+    of the *same* streamed reply, not just during a slow tool call); cancels on
+    `BotStartedSpeakingFrame`; cancels **and** resets the reprompt flag on `VADUserStartedSpeakingFrame`.
+    First expiry speaks the reprompt and re-arms; second expiry speaks the goodbye and calls `end_call()`.
+    Both phrases are pushed as `TTSSpeakFrame`s — Pipecat's own primitive for "speak this now,
+    independent of any LLM turn" (also earmarked for 5.4's filler phrase) — so they bypass `Agent`
+    entirely and never touch its history.
+  - **Real bug fixed along the way, not in this task's code:** `end_call()` needs `runner`
+    (`app/voice_bot.py`'s `run_bot()`), which doesn't exist yet when `build_pipeline()` is called —
+    solved with a closure over a `runner` variable assigned a few lines later (valid, standard
+    late-binding; `end_call()` is never actually *called* until long after `runner` is assigned).
+    Found and fixed a real double-ending race while wiring this in: `end_call()` calls
+    `runner.cancel()`, which tears down the transport and would trigger the existing
+    `on_client_disconnected` handler's `call_logger.end()` right afterward — silently overwriting
+    the `outcome="dropped"` that `end_call()` had just logged with the default `""`. Fixed by making
+    `CallLogger.end()` a no-op once `ended_at` is already set, which also makes it safe against any
+    *other* future double-end path, not just this one.
+  - **A real test-only race, not an implementation bug, caught while writing `tests/integration/test_silence.py`:**
+    the first version sent `LLMFullResponseEndFrame()` immediately followed by `BotStoppedSpeakingFrame()`
+    with no gap, and the timer never started. Traced it (by logging every `process_frame()` call) to
+    `LLMFullResponseEndFrame` being a `ControlFrame` — processed through the normal ordered
+    per-processor queue — while `BotStoppedSpeakingFrame` is a `SystemFrame`, handled immediately by
+    a separate task that can run *before* the queued `ControlFrame` is dequeued, so `_turn_in_progress`
+    was still stale when the timer tried to start. In the real pipeline this never happens (audio
+    playback always takes far longer than the gap between the two), but reproducing it with
+    back-to-back test frames needed a real delay in between (`SleepFrame`; empirically, under ~100ms
+    still raced in this harness, so the tests use 150ms) to let the queue drain first, confirmed
+    stable across repeated runs.
+  - Tests: `tests/integration/test_silence.py` (reprompt at the timeout, goodbye + `end_call()` after
+    a second one, the timer not firing while the bot is speaking or a turn is in progress, caller
+    speech resetting it) and the `test_pipeline_build.py` stage-index updates for the new stage.
+  - Full offline suite: 281 passed, `ruff check`/`ruff format` clean.
 
 - [ ] 5.4 **Filler for slow tools:** if a tool takes more than 700 ms, say "Ek second, check karti hoon…"
   - The filler is a **fixed phrase from code**, so it's safe to speak even though the round contains a tool call (the 5.1 suppression gate only exists to stop *LLM-generated* preambles from being spoken). Push it as a direct speak frame (e.g. `TTSSpeakFrame`) rather than through the sentence aggregator, so it isn't held waiting for sentence-ending punctuation.

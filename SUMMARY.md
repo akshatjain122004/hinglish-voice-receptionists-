@@ -5,8 +5,8 @@ up cold — a senior developer, a future version of the author, or Claude Code i
 session. It covers what the project is, what's been built, exactly how each piece was
 built (including the bugs hit and how they were fixed), what's known-broken or
 deferred, and what to do next. Written 2026-11-10, at the end of Phase 5's first two
-tasks (5.1 and 5.5); updated 2026-11-11 after tasks 5.2 (barge-in) and 5.8 (STT noise)
-landed.
+tasks (5.1 and 5.5); updated 2026-11-11 after tasks 5.2 (barge-in), 5.8 (STT noise)
+and 5.3 (silence handling) landed.
 
 Read this alongside `CLAUDE.md` (working conventions) and `docs/BUILD_PLAN.md` (the
 authoritative, task-by-task plan with its own close-out notes per task — this file
@@ -41,8 +41,9 @@ constraint — live API calls and evals cost real (small) amounts of money, so t
 only run when explicitly asked for, never automatically.
 
 **Current phase:** Phase 5 (Hinglish + latency hardening), in progress. Tasks 5.1,
-5.5, 5.2 (barge-in) and 5.8 (STT noise) are done; 5.0 (housekeeping), 5.3, 5.4, 5.6,
-5.7, 5.9 are not started yet. See §5.6 below for exactly where that stands.
+5.5, 5.2 (barge-in), 5.8 (STT noise) and 5.3 (silence handling) are done; 5.0
+(housekeeping), 5.4, 5.6, 5.7, 5.9 are not started yet. See §5.6 below for exactly
+where that stands.
 
 ---
 
@@ -365,7 +366,7 @@ remaining action item to close Phase 4's gate.
 silence, good at language-mixing. Gate: p50 ≤1.5s / p95 ≤2.5s turn latency, ≥9/10
 manual calls book correctly, barge-in + silence tests pass, eval pass rate ≥85%.
 
-Nine tasks total (5.1–5.9). **Four done so far: 5.5, 5.1, 5.2 and 5.8**, following
+Nine tasks total (5.1–5.9). **Five done so far: 5.5, 5.1, 5.2, 5.8 and 5.3**, following
 BUILD_PLAN.md's own recommended order (`5.0 → 5.2 → 5.8 → 5.3 → 5.4 → 5.6 → 5.9 → 5.7
 → 5.11 → 5.10`) from 5.2 onward; 5.5 and 5.1 landed earlier, before that order was
 written.
@@ -635,10 +636,67 @@ transcript starts no turn at all, a short real word still does.
 interrupt the bot) is untouched by this task — tracked as a column in the manual
 multi-person call check, not built around here.
 
+#### Task 5.3 — Silence handling — ✅ Done
+
+**Goal (from BUILD_PLAN.md):** ~5s of the caller saying nothing → reprompt once
+("Hello, kya aap line par hain?"); a second silent window → goodbye and end the
+call. Must never fire while the bot is speaking or the agent is thinking/running a
+tool.
+
+**Checked Pipecat's built-in idle machinery first, as the plan explicitly asks, and
+it doesn't fit:** `UserIdleController` does exactly this shape of thing (starts on
+`BotStoppedSpeakingFrame`, cancels on `BotStartedSpeakingFrame`/
+`UserStartedSpeakingFrame`, suppressed during `FunctionCallsStartedFrame`), but it's
+wired to Pipecat's native turn-taking/function-calling frame vocabulary. This
+pipeline never produces those frames — it deliberately keeps tool-calling inside
+`Agent`, not a native Pipecat LLM service (the Phase 4 architecture decision) — so
+the controller's cancel-on-caller-speech and suppress-during-tool-call logic would
+silently never fire if wired in as-is.
+
+**What got built:** `SilenceProcessor` (`app/voice_bot.py`), inserted between
+`AgentProcessor` and `tts`, using this pipeline's *actual* frames:
+`LLMFullResponseStartFrame`/`LLMFullResponseEndFrame` (already pushed by
+`AgentProcessor` every turn) track whether a turn is in progress — the timer only
+arms on `BotStoppedSpeakingFrame` when no turn is in progress, which is what stops
+it firing between two TTS clips of the *same* multi-sentence streamed reply, not
+just during a slow tool call like `answer_faq`. `VADUserStartedSpeakingFrame`
+cancels the timer and resets the reprompt flag (so a later silence starts fresh from
+the first warning). Reprompt/goodbye are pushed as `TTSSpeakFrame`s — Pipecat's
+"speak this now, independent of any LLM turn" primitive, also earmarked for 5.4's
+filler phrase — so neither touches `Agent`'s history.
+
+**Two real bugs found and fixed while wiring `end_call()` in:**
+- `end_call()` needs `WorkerRunner`, which doesn't exist yet when `build_pipeline()`
+  runs inside `run_bot()`. Solved with a closure over a `runner` variable assigned a
+  few lines later — valid, standard Python late-binding, since `end_call()` is only
+  ever actually invoked long after `runner` holds the real object.
+- `end_call()` logs `outcome="dropped"` then cancels the runner, which tears down
+  the transport and would otherwise trigger the existing `on_client_disconnected`
+  handler's own `call_logger.end()` right after — silently overwriting the dropped
+  outcome with the default `""`. Fixed by making `CallLogger.end()` a no-op once
+  `ended_at` is already set, which also guards any *other* future double-end path.
+
+**A real test-only race, not an implementation bug:** the first version of
+`tests/integration/test_silence.py` sent `LLMFullResponseEndFrame()` immediately
+followed by `BotStoppedSpeakingFrame()` with no gap, and the timer never started.
+Traced (by logging every `process_frame()` call) to `LLMFullResponseEndFrame` being
+a `ControlFrame` — processed through the normal ordered per-processor queue — while
+`BotStoppedSpeakingFrame` is a `SystemFrame`, handled immediately by a separate task
+that can run *before* the queued `ControlFrame` is dequeued, leaving
+`_turn_in_progress` stale. Never happens in the real pipeline (audio playback always
+takes far longer than this gap), but reproducing the test needed a real delay
+in between (empirically, under ~100ms still raced in this harness; the tests use
+150ms), confirmed stable across repeated runs.
+
+**Tests:** `tests/integration/test_silence.py` — reprompt at the timeout, goodbye +
+`end_call()` after a second one, the timer not firing while the bot is speaking or a
+turn is in progress, caller speech resetting it. `test_pipeline_build.py`'s stage
+indices updated for the new stage.
+
+**Final state:** 281 tests passing, `ruff check`/`ruff format` clean.
+
 #### Remaining Phase 5 tasks (not started)
 
-- **5.3 — Silence handling:** ~5s silence → "Hello, kya aap line par hain?"; a
-  second silence → say goodbye and end the session.
 - **5.4 — Filler for slow tools:** a tool taking >700ms → "Ek second, check karti
   hoon…"
 - **5.6 — Spoken-output normalization:** `17:30` → "saade paanch baje", `₹500` →
@@ -765,9 +823,9 @@ per the cost-conscious rule).
 
 ## 10. What a senior developer should probably do next
 
-1. **Commit and push task 5.2's barge-in work** (not yet done as of this writing) —
-   then actually check the GitHub Actions run, since local `main` is ~34 commits
-   ahead of `origin/main` and CI hasn't run since Phase 0.
+1. **Push to `origin/main` and actually check the GitHub Actions run** — local
+   `main` is far ahead of `origin/main` (commits through tasks 5.2/5.8/5.3 included)
+   and CI hasn't run since Phase 0.
 2. **Record the 10 STT sample `.wav` files** (Phase 4's one remaining gap) — this
    needs an actual human, 10 short Hinglish sentences, instructions already in
    `tests/fixtures/audio/manifest.yaml`.
