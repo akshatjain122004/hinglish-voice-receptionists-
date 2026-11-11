@@ -188,3 +188,21 @@ Design choices and discoveries worth remembering, added as phases progress.
     `on_client_disconnected` handler's own `call_logger.end()` right after - silently overwriting
     the dropped outcome with the default `""`. Guarding `end()` to no-op once `ended_at` is already
     set fixes this for any future double-end path too, not just this one.
+- **5.4: tool calls run via `asyncio.to_thread`, racing a filler timer instead of
+  cancelling anything.** `tools.call_tool` was a plain synchronous call inside
+  `Agent.handle_turn()`'s loop with no `await` anywhere in it, so a 700ms filler timer
+  genuinely could never have gotten a turn to run alongside it - confirmed, not just
+  suspected, before fixing. Each tool call now runs as
+  `asyncio.to_thread(tools.call_tool, ...)`, raced against
+  `asyncio.wait({task}, timeout=filler_threshold_secs)`: if the timeout wins,
+  `on_slow_tool()` fires once (never cancelling the task - the tool keeps running and
+  its real result is always awaited afterward), gated by a `filler_fired` flag scoped
+  to that one `handle_turn()` call, which is what makes "at most one filler per turn"
+  fall out for free even across two independently-slow tool rounds. `app/db.py`'s
+  engine already had `check_same_thread=False` (needed for the test `db` fixture's
+  `StaticPool`), so running SQLite calls from the thread pool needed no further change.
+  `filler_threshold_secs` is an `Agent.__init__` parameter (default
+  `app.agent.FILLER_THRESHOLD_SECS = 0.7`), the same instance-configurable-timing-knob
+  pattern as `SilenceProcessor.silence_timeout` from 5.3, so tests don't have to wait
+  out the real 700ms. The filler phrase itself is a `TTSSpeakFrame`, same primitive as
+  5.3's reprompt/goodbye, so it never touches `Agent`'s history either.

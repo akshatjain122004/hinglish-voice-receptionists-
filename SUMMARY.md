@@ -5,8 +5,8 @@ up cold — a senior developer, a future version of the author, or Claude Code i
 session. It covers what the project is, what's been built, exactly how each piece was
 built (including the bugs hit and how they were fixed), what's known-broken or
 deferred, and what to do next. Written 2026-11-10, at the end of Phase 5's first two
-tasks (5.1 and 5.5); updated 2026-11-11 after tasks 5.2 (barge-in), 5.8 (STT noise)
-and 5.3 (silence handling) landed.
+tasks (5.1 and 5.5); updated 2026-11-11 after tasks 5.2 (barge-in), 5.8 (STT noise),
+5.3 (silence handling) and 5.4 (filler for slow tools) landed.
 
 Read this alongside `CLAUDE.md` (working conventions) and `docs/BUILD_PLAN.md` (the
 authoritative, task-by-task plan with its own close-out notes per task — this file
@@ -41,9 +41,9 @@ constraint — live API calls and evals cost real (small) amounts of money, so t
 only run when explicitly asked for, never automatically.
 
 **Current phase:** Phase 5 (Hinglish + latency hardening), in progress. Tasks 5.1,
-5.5, 5.2 (barge-in), 5.8 (STT noise) and 5.3 (silence handling) are done; 5.0
-(housekeeping), 5.4, 5.6, 5.7, 5.9 are not started yet. See §5.6 below for exactly
-where that stands.
+5.5, 5.2 (barge-in), 5.8 (STT noise), 5.3 (silence handling) and 5.4 (filler for slow
+tools) are done; 5.0 (housekeeping), 5.6, 5.7, 5.9 are not started yet. See §5.6
+below for exactly where that stands.
 
 ---
 
@@ -366,7 +366,7 @@ remaining action item to close Phase 4's gate.
 silence, good at language-mixing. Gate: p50 ≤1.5s / p95 ≤2.5s turn latency, ≥9/10
 manual calls book correctly, barge-in + silence tests pass, eval pass rate ≥85%.
 
-Nine tasks total (5.1–5.9). **Five done so far: 5.5, 5.1, 5.2, 5.8 and 5.3**, following
+Nine tasks total (5.1–5.9). **Six done so far: 5.5, 5.1, 5.2, 5.8, 5.3 and 5.4**, following
 BUILD_PLAN.md's own recommended order (`5.0 → 5.2 → 5.8 → 5.3 → 5.4 → 5.6 → 5.9 → 5.7
 → 5.11 → 5.10`) from 5.2 onward; 5.5 and 5.1 landed earlier, before that order was
 written.
@@ -695,10 +695,46 @@ indices updated for the new stage.
 
 **Final state:** 281 tests passing, `ruff check`/`ruff format` clean.
 
+#### Task 5.4 — Filler for slow tools — ✅ Done
+
+**Goal (from BUILD_PLAN.md):** if a tool call takes more than 700ms, say "Ek second,
+check karti hoon…" so the caller doesn't hear dead air (e.g. during `answer_faq`'s
+embedding lookup). At most one filler per turn, even across two slow tool rounds.
+
+**Confirmed the plan's own "check first" concern was real:** `tools.call_tool` was a
+plain synchronous call inside `Agent.handle_turn()`'s loop with no `await` anywhere
+in it — a 700ms timer racing it genuinely never would have gotten a turn to run.
+
+**What got built:** each tool call now runs as `asyncio.to_thread(tools.call_tool,
+...)`, raced against `asyncio.wait({task}, timeout=filler_threshold_secs)`. If the
+timeout wins, `on_slow_tool()` fires once — the tool call itself is never cancelled,
+only the *silent waiting* stops; the call keeps running in its thread and its real
+result is still awaited and used afterward. A `filler_fired` flag scoped to one
+`handle_turn()` call makes "at most one filler per turn" fall out for free across
+multiple slow rounds, with no pipeline-level bookkeeping needed.
+- `Agent.__init__` gained `filler_threshold_secs` (default
+  `app.agent.FILLER_THRESHOLD_SECS = 0.7`) — the same instance-configurable-timing
+  pattern as `SilenceProcessor.silence_timeout` from 5.3, so tests use a tiny real
+  value instead of waiting out 700ms.
+- `Agent.handle_turn(..., on_slow_tool=...)` is wired in `AgentProcessor`
+  (`app/voice_bot.py`) to push `TTSSpeakFrame(text=FILLER_TEXT)` — skipped if the
+  caller already interrupted, same reasoning as 5.2's `on_reply_chunk` guard.
+  `chat_cli.py`/the eval harness never pass it, so text callers are unaffected.
+- `app/db.py`'s engine already had `check_same_thread=False` (needed for the test
+  `db` fixture's `StaticPool`), so running `booking.py`'s SQLite calls from
+  `asyncio.to_thread`'s worker thread needed no further change.
+
+**Tests:** `tests/integration/test_filler.py` (slow tool fires once, fast tool fires
+none, two slow rounds in one turn still fire only once, no-callback text path is
+unaffected — all with a real but tiny `filler_threshold_secs` and `time.sleep()` in
+a monkeypatched `tools.call_tool`) plus one wiring test in
+`test_voice_text_equivalence.py` confirming `AgentProcessor` actually pushes the
+`TTSSpeakFrame` through the real pipeline.
+
+**Final state:** 286 tests passing, `ruff check`/`ruff format` clean.
+
 #### Remaining Phase 5 tasks (not started)
 
-- **5.4 — Filler for slow tools:** a tool taking >700ms → "Ek second, check karti
-  hoon…"
 - **5.6 — Spoken-output normalization:** `17:30` → "saade paanch baje", `₹500` →
   "paanch sau rupaye", phone numbers in digit pairs. Pure, testable function.
 - **5.7 — Shorten + cache the system prompt** to reduce LLM time-to-first-token.

@@ -73,6 +73,10 @@ SILENCE_TIMEOUT_SECS = 5.0
 SILENCE_REPROMPT_TEXT = "Hello, kya aap line par hain?"
 SILENCE_GOODBYE_TEXT = "Theek hai, main call band kar rahi hoon. Dhanyavaad, alvida!"
 
+# BUILD_PLAN 5.4: spoken when Agent.handle_turn()'s on_slow_tool fires (a
+# single tool call running past app.agent.FILLER_THRESHOLD_SECS).
+FILLER_TEXT = "Ek second, check karti hoon..."
+
 CLINIC_PATH = Path(__file__).resolve().parent.parent / "data" / "clinic.yaml"
 
 # Trailing silence (seconds) Silero VAD waits before finalizing a stop.
@@ -243,6 +247,18 @@ class AgentProcessor(FrameProcessor):
                 first_chunk_seen = True
                 await self.push_frame(TextFrame(chunk), direction)
 
+            async def on_slow_tool() -> None:
+                # BUILD_PLAN 5.4: a fixed phrase from code, not LLM-generated
+                # content, so it's safe to speak even though this round
+                # contains a tool call - the suppression gate above only ever
+                # exists to stop *LLM* preambles from being spoken. Pushed as
+                # a TTSSpeakFrame (bypasses the sentence aggregator - it would
+                # otherwise sit waiting for punctuation that never arrives)
+                # and skipped once the caller has already started talking
+                # again, same reasoning as on_reply_chunk's guard.
+                if not self._interrupted:
+                    await self.push_frame(TTSSpeakFrame(text=FILLER_TEXT), direction)
+
             turn_failed = False
             try:
                 reply = await self.agent.handle_turn(
@@ -250,6 +266,7 @@ class AgentProcessor(FrameProcessor):
                     frame.text,
                     on_tool_call=self.on_tool_call,
                     on_reply_chunk=on_reply_chunk,
+                    on_slow_tool=on_slow_tool,
                 )
             except Exception:  # noqa: BLE001 - Sarvam's HTTP call is known-flaky
                 # (httpx.ReadTimeout etc.); any exception here must still close out

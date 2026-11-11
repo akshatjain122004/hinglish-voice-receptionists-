@@ -7,6 +7,7 @@ client (Sarvam) can be swapped in later without touching this file.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
@@ -20,6 +21,11 @@ from app import prompts, tools
 from app.llm_streaming import ChatDelta, ToolCallAccumulator, ToolCallDelta
 
 MAX_TOOL_ROUNDS = 4
+
+# BUILD_PLAN 5.4: if a single tool call runs longer than this, give the voice
+# path a chance to say a filler phrase ("Ek second, check karti hoon...")
+# instead of leaving dead air. Text callers (no on_slow_tool) never see this.
+FILLER_THRESHOLD_SECS = 0.7
 
 FALLBACK_MESSAGE = (
     "Maaf kijiye, thoda technical issue ho raha hai. "
@@ -139,10 +145,12 @@ class Agent:
         now: datetime | None = None,
         system_prompt: str | None = None,
         caller_phone: str | None = None,
+        filler_threshold_secs: float = FILLER_THRESHOLD_SECS,
     ) -> None:
         self.llm = llm
         self.max_tool_rounds = max_tool_rounds
         self.now = now
+        self.filler_threshold_secs = filler_threshold_secs
         self.system_prompt = system_prompt or prompts.SYSTEM_PROMPT
         self.caller_phone = caller_phone
         self._sessions: dict[str, list[dict[str, Any]]] = {}
@@ -159,11 +167,16 @@ class Agent:
         *,
         on_tool_call: Callable[[str, dict[str, Any], dict[str, Any]], None] | None = None,
         on_reply_chunk: Callable[[str], Awaitable[None]] | None = None,
+        on_slow_tool: Callable[[], Awaitable[None]] | None = None,
         caller_phone: str | None = None,
     ) -> str:
         caller_phone = caller_phone if caller_phone is not None else self.caller_phone
         history = self._history(session_id)
         history.append({"role": "user", "content": user_text})
+        # Turn-scoped (BUILD_PLAN 5.4): once a filler has been spoken for this
+        # turn, a second slow tool round in the same turn must not speak a
+        # second one.
+        filler_fired = False
 
         for _ in range(self.max_tool_rounds):
             accumulator = ToolCallAccumulator()
@@ -204,9 +217,29 @@ class Agent:
                 }
             )
             for tc in tool_calls:
-                result = tools.call_tool(
-                    tc.name, tc.arguments, now=self.now, caller_phone=caller_phone
+                # Run off the event loop thread (BUILD_PLAN 5.4's own "check
+                # first": tools.call_tool is a plain synchronous function -
+                # answer_faq's embedding lookup in particular blocks the CPU
+                # for real work - so a 700ms asyncio timer below could never
+                # fire, and the audio pipeline would stall too, if this ran
+                # inline). Not cancelled on a slow-tool timeout below; we just
+                # stop *waiting silently* for it, the call itself still runs
+                # to completion and its result is always used.
+                task = asyncio.ensure_future(
+                    asyncio.to_thread(
+                        tools.call_tool,
+                        tc.name,
+                        tc.arguments,
+                        now=self.now,
+                        caller_phone=caller_phone,
+                    )
                 )
+                if not filler_fired and on_slow_tool is not None:
+                    done, _pending = await asyncio.wait({task}, timeout=self.filler_threshold_secs)
+                    if task not in done:
+                        filler_fired = True
+                        await on_slow_tool()
+                result = await task
                 if on_tool_call is not None:
                     on_tool_call(tc.name, tc.arguments, result)
                 history.append(

@@ -3,6 +3,7 @@ produces exactly the tool calls the Phase 2 text agent (`Agent.handle_turn`)
 produces for the same input — the voice pipeline must reuse that loop, not
 reimplement tool-calling inside Pipecat."""
 
+import time
 from collections.abc import AsyncIterator
 from datetime import datetime
 
@@ -12,13 +13,15 @@ from pipecat.frames.frames import (
     LLMFullResponseStartFrame,
     TextFrame,
     TranscriptionFrame,
+    TTSSpeakFrame,
 )
 from pipecat.tests.utils import run_test
 
+from app import tools as tools_module
 from app.agent import FALLBACK_MESSAGE, Agent, LLMResponse, ToolCall
 from app.booking import IST
 from app.llm_streaming import ChatDelta
-from app.voice_bot import AgentProcessor
+from app.voice_bot import FILLER_TEXT, AgentProcessor
 from tests.fixtures.fake_llm import FakeLLM
 
 NOW = datetime(2026, 11, 9, 10, 0, tzinfo=IST)
@@ -250,3 +253,39 @@ async def test_short_real_confirmation_word_still_starts_a_turn():
 
     text_frames = [f for f in down_frames if isinstance(f, TextFrame)]
     assert [f.text for f in text_frames] == ["Theek hai, confirm."]
+
+
+@pytest.mark.asyncio
+async def test_slow_tool_speaks_the_filler_through_the_voice_pipeline(monkeypatch):
+    """BUILD_PLAN 5.4: AgentProcessor wires Agent's on_slow_tool into a real
+    TTSSpeakFrame - the pure mechanism itself is covered in
+    tests/integration/test_filler.py, this is the pipeline wiring."""
+    monkeypatch.setattr(
+        tools_module, "call_tool", lambda *a, **k: (time.sleep(0.1), {"ok": True})[1]
+    )
+    agent = Agent(
+        FakeLLM(
+            responses=[
+                LLMResponse(
+                    content=None,
+                    tool_calls=[ToolCall(id="1", name="check_slots", arguments={})],
+                ),
+                LLMResponse(content="Yahan hai."),
+            ]
+        ),
+        now=NOW,
+        filler_threshold_secs=0.02,
+    )
+    processor = AgentProcessor(agent)
+
+    down_frames, _ = await run_test(
+        processor,
+        frames_to_send=[
+            TranscriptionFrame(
+                text="kal slot hai?", user_id="caller", timestamp="2026-11-09T10:00:00Z"
+            ),
+        ],
+    )
+
+    speak_frames = [f for f in down_frames if isinstance(f, TTSSpeakFrame)]
+    assert [f.text for f in speak_frames] == [FILLER_TEXT]

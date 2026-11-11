@@ -894,10 +894,41 @@ pause Y/N) to confirm it's not now *too* long; no unit test can validate that tr
     speech resetting it) and the `test_pipeline_build.py` stage-index updates for the new stage.
   - Full offline suite: 281 passed, `ruff check`/`ruff format` clean.
 
-- [ ] 5.4 **Filler for slow tools:** if a tool takes more than 700 ms, say "Ek second, check karti hoon…"
+- [x] 5.4 **Filler for slow tools:** if a tool takes more than 700 ms, say "Ek second, check karti hoon…"
   - The filler is a **fixed phrase from code**, so it's safe to speak even though the round contains a tool call (the 5.1 suppression gate only exists to stop *LLM-generated* preambles from being spoken). Push it as a direct speak frame (e.g. `TTSSpeakFrame`) rather than through the sentence aggregator, so it isn't held waiting for sentence-ending punctuation.
   - **Check first:** if tools are plain synchronous functions called inside `handle_turn()`, a 700 ms asyncio timer *cannot fire* while they run, because the event loop is blocked. `answer_faq` runs an embedding model on the CPU, which blocks audio too. Run tools with `asyncio.to_thread(...)` so both the filler timer and the audio pipeline keep moving.
   - At most one filler per turn, even if a turn has two slow tool rounds.
+
+  **Confirmed the "check first" concern was real, not hypothetical:** `tools.call_tool` was a plain
+  synchronous call inside `Agent.handle_turn()`'s loop with no `await` anywhere in it — a 700ms
+  timer racing it genuinely never would have gotten a turn to run. Fixed by running each tool call
+  via `asyncio.to_thread(tools.call_tool, ...)` and racing the resulting task against
+  `asyncio.wait({task}, timeout=...)`: if the tool wins, nothing changes; if the timeout wins, fire
+  `on_slow_tool()` once and then `await task` anyway (the call is never cancelled — only the
+  *silent waiting* stops, the tool still runs to completion and its real result is always used).
+  `filler_fired` is a local flag scoped to one `handle_turn()` call, so a second slow round in the
+  same turn skips the race entirely and just awaits the task — satisfies "at most one filler per
+  turn" directly, without needing any pipeline-level bookkeeping.
+  - New `Agent.__init__` parameter `filler_threshold_secs` (defaults to the new
+    `app.agent.FILLER_THRESHOLD_SECS = 0.7`), matching the existing pattern of making timing
+    knobs instance-configurable (`SilenceProcessor.silence_timeout` from 5.3) so tests can use a
+    tiny real value instead of waiting out the real 700ms.
+  - New `Agent.handle_turn(..., on_slow_tool=...)` parameter, wired in `AgentProcessor`
+    (`app/voice_bot.py`) to push `TTSSpeakFrame(text=FILLER_TEXT)` — skipped if the caller has
+    already interrupted (`self._interrupted`), same reasoning as the `on_reply_chunk` guard from
+    5.2. `chat_cli.py`/the eval harness never pass it, so text callers see no behavior change at all.
+  - SQLite thread-safety: `app/db.py`'s engine already has `check_same_thread=False` (needed
+    anyway for the test `db` fixture's `StaticPool`), so running `booking.py`'s DB calls from
+    `asyncio.to_thread`'s worker thread needed no change.
+  - Tests: `tests/integration/test_filler.py` (the pure `Agent.handle_turn()` mechanism — slow tool
+    fires once, fast tool fires none, two slow rounds in one turn still fire only once, and a caller
+    with no `on_slow_tool` at all is unaffected) plus one wiring test added to
+    `tests/integration/test_voice_text_equivalence.py` confirming `AgentProcessor` actually pushes
+    the `TTSSpeakFrame` through the real frame pipeline. All use a real but tiny
+    `filler_threshold_secs` and `time.sleep()` in a monkeypatched `tools.call_tool` (run via the
+    real `asyncio.to_thread`) rather than a fake clock — fast and deterministic (the tool call
+    always finishes well after the short race timeout elapses).
+  - Full offline suite: 286 passed, `ruff check`/`ruff format` clean.
 
 - [ ] 5.6 **Spoken output normalisation:** `17:30` → "saade paanch baje", `₹500` → "paanch sau rupaye", and phone numbers read in pairs.
   - Write a pure function `app/speech.py: normalise_for_speech(text, lang) -> str` with no pipecat imports, in the same style as `app/metrics.py`.
