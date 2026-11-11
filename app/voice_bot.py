@@ -31,12 +31,14 @@ from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.frames.frames import (
     Frame,
+    InterruptionFrame,
     LLMFullResponseEndFrame,
     LLMFullResponseStartFrame,
     TextFrame,
     TranscriptionFrame,
     TTSAudioRawFrame,
     TTSStartedFrame,
+    VADUserStartedSpeakingFrame,
     VADUserStoppedSpeakingFrame,
 )
 from pipecat.pipeline.pipeline import Pipeline
@@ -152,9 +154,20 @@ class AgentProcessor(FrameProcessor):
         self.on_tool_call = on_tool_call
         self.on_turn = on_turn
         self.turn_tracker = turn_tracker
+        # Set True by an InterruptionFrame that arrives mid-turn (see below) and
+        # reset at the start of every new turn. Only suppresses *speaking* -
+        # handle_turn() itself is never cancelled (see the `frame.interruptible =
+        # False` note below), so a tool call already decided on (e.g. a booking)
+        # always finishes and lands in history even if the caller stops hearing it.
+        self._interrupted = False
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
+
+        if isinstance(frame, InterruptionFrame):
+            self._interrupted = True
+            await self.push_frame(frame, direction)
+            return
 
         if isinstance(frame, VADUserStoppedSpeakingFrame):
             if self.turn_tracker is not None:
@@ -163,6 +176,23 @@ class AgentProcessor(FrameProcessor):
             return
 
         if isinstance(frame, TranscriptionFrame) and frame.text.strip():
+            self._interrupted = False
+
+            # Never cancel a booking halfway (BUILD_PLAN 5.2's #1 concern):
+            # Pipecat's default interruption handling cancels whatever task is
+            # currently processing a frame in this processor. If the caller
+            # starts talking again while handle_turn() is still mid-loop (e.g.
+            # awaiting the LLM's next round right after a book_appointment tool
+            # call already committed), a cancellation there would abandon that
+            # tool's result before it's recorded in history, even though the
+            # booking itself already happened. Marking this frame uninterruptible
+            # (see Frame.interruptible's docstring - this is Pipecat's own
+            # mechanism for exactly this, also used internally by its Flows
+            # manager) keeps this processor's task running to natural
+            # completion; `self._interrupted` above is what actually stops the
+            # *speaking*, via the on_reply_chunk guard below.
+            frame.interruptible = False
+
             if self.turn_tracker is not None:
                 self.turn_tracker.mark_stt_final(time.time())
 
@@ -181,6 +211,13 @@ class AgentProcessor(FrameProcessor):
 
             async def on_reply_chunk(chunk: str) -> None:
                 nonlocal first_chunk_seen
+                if self._interrupted:
+                    # Drop remaining chunks after an interruption (BUILD_PLAN
+                    # 5.2's #2 concern) - handle_turn() keeps running so its
+                    # tool calls and history update still complete, but nothing
+                    # more of this turn's reply reaches TTS once the caller has
+                    # started talking again.
+                    return
                 if self.turn_tracker is not None and not first_chunk_seen:
                     self.turn_tracker.mark_llm_first_token(time.time())
                 first_chunk_seen = True
@@ -202,12 +239,15 @@ class AgentProcessor(FrameProcessor):
                 reply = FALLBACK_MESSAGE
                 turn_failed = True
 
-            if not first_chunk_seen or turn_failed:
+            if (not first_chunk_seen or turn_failed) and not self._interrupted:
                 # handle_turn() can return a reply (e.g. FALLBACK_MESSAGE, after
                 # hitting max_tool_rounds) without ever streaming content through
                 # on_reply_chunk - push it now so the caller still hears something.
                 # Also pushed when handle_turn() raised mid-stream (turn_failed),
                 # even if some chunks were already streamed before the failure.
+                # Never pushed if the caller already started talking again
+                # (self._interrupted) - same reasoning as the on_reply_chunk guard
+                # above: don't start speaking a fresh reply over an interruption.
                 if self.turn_tracker is not None and not first_chunk_seen:
                     self.turn_tracker.mark_llm_first_token(time.time())
                 await self.push_frame(TextFrame(reply), direction)
@@ -217,6 +257,27 @@ class AgentProcessor(FrameProcessor):
             await self.push_frame(LLMFullResponseEndFrame(), direction)
             return
 
+        await self.push_frame(frame, direction)
+
+
+class BargeInProcessor(FrameProcessor):
+    """Stops TTS immediately when the caller starts speaking.
+
+    Sits right after `VADProcessor` in `build_pipeline()`. Pipecat's base
+    `TTSService._handle_interruption()` (used by both the HTTP and WebSocket
+    Sarvam TTS services) already resets text aggregation and drops
+    queued/in-flight audio on receiving an `InterruptionFrame` - the only
+    thing missing was something that actually broadcasts one when the caller
+    starts talking, which is this processor's entire job. No new VAD tuning
+    needed: `start_secs=0.2s` (Pipecat's Silero default, untouched by
+    `VAD_STOP_SECS` above) already debounces a single-blip false trigger
+    before `VADUserStartedSpeakingFrame` is even created.
+    """
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
+        await super().process_frame(frame, direction)
+        if isinstance(frame, VADUserStartedSpeakingFrame):
+            await self.broadcast_interruption()
         await self.push_frame(frame, direction)
 
 
@@ -262,12 +323,15 @@ def build_pipeline(
 ) -> Pipeline:
     """Assembles the voice pipeline in the BUILD_PLAN's stage order.
 
-    `TTSLatencyMarker` is only added when `turn_tracker` is given, since it's
-    the thing that needs one to do anything.
+    `BargeInProcessor` sits right after VAD (BUILD_PLAN 5.2), so a caller
+    interruption is broadcast before STT/the agent/TTS ever see the frame
+    that triggered it. `TTSLatencyMarker` is only added when `turn_tracker`
+    is given, since it's the thing that needs one to do anything.
     """
     stages = [
         transport.input(),
         VADProcessor(vad_analyzer=vad_analyzer),
+        BargeInProcessor(),
         stt,
         AgentProcessor(
             agent,

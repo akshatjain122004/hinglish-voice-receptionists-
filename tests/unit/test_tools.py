@@ -80,7 +80,7 @@ class TestBookAppointment:
 
 class TestCancelAppointment:
     def test_cancels_an_existing_booking(self, db):
-        book("9829012345", "Ravi", "cleaning", _a_free_slot())
+        book("9829012345", "Ravi", "cleaning", _a_free_slot(), now=NOW)
         result = tools.cancel_appointment(phone="9829012345")
         assert result["ok"] is True
 
@@ -92,7 +92,7 @@ class TestCancelAppointment:
 
 class TestRescheduleAppointment:
     def test_reschedules_to_a_free_slot(self, db):
-        book("9829012345", "Ravi", "cleaning", _a_free_slot())
+        book("9829012345", "Ravi", "cleaning", _a_free_slot(), now=NOW)
         result = tools.reschedule_appointment(
             phone="9829012345", new_start="parso shaam saade chhe", now=NOW
         )
@@ -243,7 +243,7 @@ class TestCallToolInjectsCallerPhone:
         assert result["appointment"]["phone"] == "+919829012345"
 
     def test_cancel_appointment_gets_caller_phone_injected(self, db):
-        book("9829012345", "Ravi", "cleaning", _a_free_slot())
+        book("9829012345", "Ravi", "cleaning", _a_free_slot(), now=NOW)
         result = tools.call_tool("cancel_appointment", {}, caller_phone="9829012345")
         assert result["ok"] is True
 

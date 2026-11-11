@@ -9,7 +9,7 @@ from pipecat.processors.filters.identity_filter import IdentityFilter
 
 from app.agent import Agent
 from app.metrics import TurnTracker
-from app.voice_bot import AgentProcessor, TTSLatencyMarker, build_pipeline
+from app.voice_bot import AgentProcessor, BargeInProcessor, TTSLatencyMarker, build_pipeline
 from tests.fixtures.fake_llm import FakeLLM
 
 
@@ -41,11 +41,12 @@ def test_build_pipeline_wires_stages_in_plan_order():
 
     assert stages[0] is transport.input_processor
     assert isinstance(stages[1], VADProcessor)
-    assert stages[2] is stt
-    assert isinstance(stages[3], AgentProcessor)
-    assert stages[3].agent is agent
-    assert stages[4] is tts
-    assert stages[5] is transport.output_processor
+    assert isinstance(stages[2], BargeInProcessor)
+    assert stages[3] is stt
+    assert isinstance(stages[4], AgentProcessor)
+    assert stages[4].agent is agent
+    assert stages[5] is tts
+    assert stages[6] is transport.output_processor
 
 
 def test_build_pipeline_adds_tts_latency_marker_when_turn_tracker_given():
@@ -61,7 +62,7 @@ def test_build_pipeline_adds_tts_latency_marker_when_turn_tracker_given():
     )
 
     stages = pipeline._processors[1:-1]
-    assert len(stages) == 7
-    assert isinstance(stages[5], TTSLatencyMarker)
-    assert stages[5].turn_tracker is turn_tracker
-    assert stages[6] is transport.output_processor
+    assert len(stages) == 8
+    assert isinstance(stages[6], TTSLatencyMarker)
+    assert stages[6].turn_tracker is turn_tracker
+    assert stages[7] is transport.output_processor

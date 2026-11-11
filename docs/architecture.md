@@ -109,5 +109,53 @@ Design choices and discoveries worth remembering, added as phases progress.
     apology.
   - TTS stays on `SarvamHttpTTSService` (called once per sentence now, via pipecat's
     own aggregation, not once per full reply) rather than switching to Sarvam's
-    WebSocket streaming TTS API — that swap is deferred to task 5.2 (barge-in), where
-    pipecat's `SarvamTTSService`/`InterruptibleTTSService` is the more natural fit.
+    WebSocket streaming TTS API. **Correction from this note's original wording:**
+    task 5.2's research found the swap isn't needed for barge-in either (see below) —
+    `TTSService._handle_interruption()` is generic across HTTP and WebSocket TTS
+    services, so this remains purely optional, relevant only if raw audio latency
+    itself becomes a target later.
+- **5.2: Barge-in.** Stopping TTS mid-reply turned out to need almost no new code:
+  Pipecat's base `TTSService._handle_interruption()` (shared by `SarvamHttpTTSService`
+  and the WebSocket `SarvamTTSService`) already resets text aggregation and drops
+  queued/in-flight audio on receiving an `InterruptionFrame` — nothing in the pipeline
+  was actually *broadcasting* one when the caller started talking. The whole task is
+  one new processor plus one new flag on the existing `AgentProcessor`:
+  - **`BargeInProcessor`** (`app/voice_bot.py`), inserted right after `VADProcessor` in
+    `build_pipeline()`: on `VADUserStartedSpeakingFrame` it calls
+    `self.broadcast_interruption()` and otherwise forwards every frame unchanged. No new
+    VAD tuning — Silero's `start_secs=0.2s` default (untouched by `VAD_STOP_SECS`) already
+    debounces a single-blip false trigger before this frame is even created.
+  - **Never cancel a booking halfway.** Pipecat's default interruption handling cancels
+    whatever task is currently processing a frame in a processor. If the caller starts
+    talking again while `AgentProcessor` is mid-`handle_turn()` — e.g. waiting on the
+    LLM's next round right after a `book_appointment` tool call already committed — a
+    naive cancellation there would abandon that tool's result before `Agent` records it
+    in history, even though the booking itself already happened. The fix uses Pipecat's
+    own mechanism for this (the same one its internal Flows manager uses for "context
+    must land even if interrupted"): `AgentProcessor` sets `frame.interruptible = False`
+    on the `TranscriptionFrame` it's about to process. Pipecat's `_start_interruption()`
+    checks exactly this flag and, when it's `False`, leaves the current processing task
+    running to natural completion instead of cancelling it.
+  - **No leftover speech from an interrupted turn.** Letting `handle_turn()` run to
+    completion means it would otherwise keep pushing `TextFrame` chunks for TTS to speak
+    even after the caller has started talking again. `AgentProcessor` tracks a separate
+    `self._interrupted` flag, set `True` by an `InterruptionFrame` arriving mid-turn (via
+    Pipecat's own input-frame task, which runs concurrently with the uninterruptible
+    process task above) and reset `False` at the start of every new turn. The
+    `on_reply_chunk` callback and the final non-streamed-reply push both check it and
+    drop the content instead of forwarding it once set.
+  - **Decision:** `Agent`'s conversation history (and the `CallLog` transcript) always
+    keep the *full* reply text, even when the caller only heard part of it before
+    interrupting. This is the simplest option and is acceptable because the
+    confirm-before-booking rule (non-negotiable rule #3) means any misunderstanding gets
+    caught on the next read-back, not silently compounded.
+  - Tested in `tests/integration/test_barge_in.py`: `BargeInProcessor` broadcasts on
+    `VADUserStartedSpeakingFrame`; an interruption mid-turn (engineered with a real
+    `asyncio.sleep` in a scripted LLM, timed with Pipecat's `SleepFrame` test helper so
+    the interruption lands *after* the turn has started rather than being reset away by
+    the turn's own startup) still commits exactly one booking and records the tool
+    result in history, while pushing zero `TextFrame`s for it; the next turn starts
+    clean. Verified as a real regression guard, not an accidental pass, by temporarily
+    removing `frame.interruptible = False` and confirming the booking test fails (the
+    turn gets cut off before `LLMFullResponseEndFrame`, leaving TTS's turn context open)
+    — see the task's close-out note in `docs/BUILD_PLAN.md` for the full before/after.
