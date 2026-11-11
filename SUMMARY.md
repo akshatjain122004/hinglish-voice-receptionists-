@@ -6,7 +6,7 @@ session. It covers what the project is, what's been built, exactly how each piec
 built (including the bugs hit and how they were fixed), what's known-broken or
 deferred, and what to do next. Written 2026-11-10, at the end of Phase 5's first two
 tasks (5.1 and 5.5); updated 2026-11-11 after Phase 5's remaining tasks (5.2, 5.8,
-5.3, 5.4, 5.6, 5.9 and 5.7) all landed, completing every code task in the phase.
+5.3, 5.4, 5.6, 5.9, 5.7 and 5.0's housekeeping) all landed.
 
 Read this alongside `CLAUDE.md` (working conventions) and `docs/BUILD_PLAN.md` (the
 authoritative, task-by-task plan with its own close-out notes per task — this file
@@ -41,10 +41,11 @@ constraint — live API calls and evals cost real (small) amounts of money, so t
 only run when explicitly asked for, never automatically.
 
 **Current phase:** Phase 5 (Hinglish + latency hardening), in progress. All nine
-code tasks (5.1-5.9) are done. Only 5.0 (housekeeping - the latency-report honesty
-fix and test-suite-budget check), the manual multi-person call checks, and the
-eval-related tasks (5.10, 5.11) remain before the phase's gate can be assessed. See
-§5.6 below for exactly where that stands.
+code tasks (5.1-5.9) and 5.0's housekeeping are done (except pushing to `origin` for
+a real CI check, which needs your go-ahead). Only the manual multi-person call
+checks and the eval-related tasks (5.10, 5.11 — both need a live, paid LLM run)
+remain before the phase's gate can be assessed. See §5.6 below for exactly where
+that stands.
 
 ---
 
@@ -903,7 +904,52 @@ for a usage-less empty-choices chunk (still skipped) and one confirming
 
 **Final state:** 340 tests passing, `ruff check`/`ruff format` clean.
 
-#### Phase 5: all nine tasks now done
+#### Task 5.0 — Housekeeping — ✅ Done (except the CI push, left for you)
+
+**Goal:** confirm CI is actually green, make the latency numbers honest (two
+documented blind spots), and check the offline suite's ~26-30s runtime against its
+30s budget.
+
+- **(a) CI:** still can't be checked without pushing — local `main` is now far ahead
+  of `origin/main` (every Phase 5 commit). The full local offline suite has been
+  re-verified green after every commit this phase instead. **Ready to push whenever
+  you say so** — nothing is blocking it.
+- **(b)(1) — the "one row per TTS clip" bug was real.** `TTSLatencyMarker` reset its
+  "already marked" flag on every `TTSStartedFrame`, which fires once per *sentence*
+  since 5.1's streaming TTS — a 3-sentence reply really was logged as 3 separate
+  "turns." Fixed by resetting on `LLMFullResponseStartFrame` (a turn boundary)
+  instead of `TTSStartedFrame` (a clip boundary). Verified with a dedicated test
+  that two sentences in one turn mark once, and a genuinely new turn re-arms it.
+  Known, accepted side effect: a 5.4 filler phrase mid-turn now becomes "first
+  audio" for that turn — arguably more honest, since it's literally the first sound
+  the caller hears.
+- **(b)(2)** `latency_summary()` gained a `vad_stop_secs` parameter: when given, it
+  adds a `perceived_total_ms` stage (`total_latency_ms`'s p50/p95 plus the fixed
+  offset) next to the comparable-with-Phase-4 number. `scripts/latency_report.py`
+  passes `VAD_STOP_SECS` in automatically now.
+- **Found and fixed the exact same stale-hardcoded-title bug Phase 3 already hit
+  once, in a sibling script, before it could bite again.**
+  `scripts/latency_report.py` was still hardcoded to `"Phase 4"` — the very next run
+  (Phase 5's upcoming manual call check, which needs `latency_phase5.md`) would have
+  silently written the wrong file. Now takes the phase number as an optional CLI
+  arg, defaulting to `"5"`. (`scripts/run_evals.py` has the identical unfixed
+  pattern — its title parameter exists but the script itself still hardcodes
+  `"Phase 3"` — left alone since fixing a different script wasn't in scope, flagged
+  for next time.) Verified end-to-end against the real Phase 4 log data, then
+  deleted that smoke-test output rather than committing stale data mislabeled as
+  Phase 5's real report.
+- **(c) — verified the suggested fix doesn't actually change anything today,
+  rather than assuming it would.** The real-embedding fixture was already
+  `scope="module"`, and it's the *only* place in the suite that loads the real
+  model — with one consuming module, "module" and "session" scope are identical.
+  Raised to `scope="session"` anyway as a zero-cost safety net for a hypothetical
+  future second consumer; the suite's ~26-30s runtime itself isn't fixable by
+  fixture scoping, it's the inherent cost of loading a real embedding model once
+  per run.
+
+**Final state:** 346 tests passing, `ruff check`/`ruff format` clean.
+
+#### Phase 5: all nine code tasks done, plus housekeeping
 
 **Phase 5's complete-when gate** (not yet met): p50 ≤1.5s / p95 ≤2.5s turn latency,
 ≥9/10 manual calls book correctly, barge-in + silence tests pass, eval pass rate
@@ -965,21 +1011,27 @@ call checks — all still ahead, per BUILD_PLAN's recommended order.
   — the harness is built, this genuinely cannot be automated.
 
 **Known-broken or fragile, not yet addressed:**
-- GitHub Actions CI was very likely broken on `main` for some time (see the `db`
-  fixture bug above) until Phase 5.1's prerequisite fix — worth confirming the next
-  CI run is actually green.
+- GitHub Actions CI still hasn't actually been checked since Phase 0 — local `main`
+  is far ahead of `origin/main` (every Phase 5 commit) and hasn't been pushed. The
+  local offline suite has been re-verified green after every commit this phase, but
+  that's a substitute, not the real CI run. Needs your go-ahead to push (BUILD_PLAN
+  5.0a).
 - `docs/BUILD_PLAN.md`'s own eval-pass-rate gates for Phases 2 and 3 (≥85%) were
   never met (sat at 56% and 73% respectively) — the project moved on by explicit
   user decision each time, tracking the number at the end of every phase instead of
-  blocking on it. Worth re-checking after more of Phase 5 lands, since none of the
-  remaining failures were FAQ/RAG-specific.
-- Offline test suite runtime has been creeping toward its ~30s budget since Phase 3
-  (dual-variant RAG indexing added real embedding-model overhead); currently
-  ~26-27s. Worth watching if more real-model tests get added.
-- `TurnTracker` logs one row per TTS clip in `latency_report.py`'s output, so a
-  multi-sentence reply contributes multiple `total_latency_ms` rows — any future
-  latency report should read p50/p95 as directionally comparable before/after a
-  change, not as a literal per-call number.
+  blocking on it. Still needs a live eval run (task 5.10) to see if anything in
+  Phase 5 moved the number.
+
+**Fixed this phase (5.0's housekeeping), listed here only for history:**
+- ~~Offline test suite runtime creeping toward its ~30s budget~~ — investigated,
+  not actually fixable by fixture scoping (it's the inherent one-time cost of a
+  real embedding model load, already paid exactly once per run); the suggested
+  fixture-scoping change was applied anyway as a free safety net, verified to
+  change nothing today.
+- ~~`TurnTracker` logged one row per TTS clip~~ — fixed: `TTSLatencyMarker` now
+  resets on a turn boundary (`LLMFullResponseStartFrame`), not a clip boundary
+  (`TTSStartedFrame`), so a multi-sentence reply logs once. `perceived_total_ms`
+  (adding `VAD_STOP_SECS`) is now reported alongside `total_latency_ms` too.
 
 **Deliberately deferred (documented, not bugs):**
 - Several Phase 5.1 edge cases around the tool-call-suppression safety gate (listed
@@ -993,10 +1045,12 @@ call checks — all still ahead, per BUILD_PLAN's recommended order.
 
 ## 8. Testing status
 
-As of the last full run (post-merge on `main`, 2026-11-10): **253 tests passing, 0
-failures, offline suite ~26-27s.** `ruff check` clean. No live tests run this
-session (per the cost-conscious rule — only run `pytest -m live` when explicitly
-asked).
+As of the last full run (2026-11-11, after Phase 5's remaining tasks and 5.0's
+housekeeping): **346 tests passing, 0 failures, offline suite ~26-30s** (the real-
+embedding RAG fixture's one-time ~19-25s load dominates; investigated in 5.0c and
+confirmed not fixable by fixture scoping). `ruff check`/`ruff format` clean. No
+live tests run this session (per the cost-conscious rule — only run `pytest -m
+live` when explicitly asked).
 
 Test layout:
 - `tests/unit/` — pure functions: `booking.py`, `timeparse.py`, `tools.py`,

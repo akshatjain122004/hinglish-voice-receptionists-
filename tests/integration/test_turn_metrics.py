@@ -6,6 +6,7 @@ from datetime import datetime
 
 import pytest
 from pipecat.frames.frames import (
+    LLMFullResponseStartFrame,
     TranscriptionFrame,
     TTSAudioRawFrame,
     TTSStartedFrame,
@@ -61,6 +62,67 @@ async def test_tts_latency_marker_marks_only_the_first_audio_frame_per_utterance
 
     first_mark = tracker.timer.tts_first_audio
     assert first_mark is not None
+
+
+def _counting_mark_tts_first_audio(tracker: TurnTracker) -> list[int]:
+    """Wraps `tracker.mark_tts_first_audio` to count calls, same pattern as
+    the existing `test_llm_first_token_marked_only_once_across_multiple_chunks`
+    below. Returns a one-element list acting as a mutable counter."""
+    calls = [0]
+    original = tracker.mark_tts_first_audio
+
+    def counting(now: float, **extra) -> None:
+        calls[0] += 1
+        original(now, **extra)
+
+    tracker.mark_tts_first_audio = counting
+    return calls
+
+
+@pytest.mark.asyncio
+async def test_tts_latency_marker_marks_once_per_turn_not_once_per_tts_clip():
+    """BUILD_PLAN 5.0b: since 5.1's streaming TTS synthesizes sentence by
+    sentence, a multi-sentence reply produces multiple TTSStartedFrame/
+    TTSAudioRawFrame sequences - resetting on `LLMFullResponseStartFrame`
+    (a turn boundary) instead of `TTSStartedFrame` (a clip boundary) is what
+    keeps this logging the turn once, not once per sentence."""
+    tracker = TurnTracker()
+    tracker.timer.speech_end = 100.0
+    calls = _counting_mark_tts_first_audio(tracker)
+    marker = TTSLatencyMarker(tracker, session_id="call-1")
+
+    await run_test(
+        marker,
+        frames_to_send=[
+            LLMFullResponseStartFrame(),
+            TTSStartedFrame(),
+            TTSAudioRawFrame(audio=b"\x00\x00", sample_rate=24000, num_channels=1),
+            TTSStartedFrame(),  # second sentence of the same reply
+            TTSAudioRawFrame(audio=b"\x00\x00", sample_rate=24000, num_channels=1),
+        ],
+    )
+
+    assert calls[0] == 1
+
+
+@pytest.mark.asyncio
+async def test_tts_latency_marker_rearms_on_the_next_turn():
+    tracker = TurnTracker()
+    tracker.timer.speech_end = 100.0
+    calls = _counting_mark_tts_first_audio(tracker)
+    marker = TTSLatencyMarker(tracker, session_id="call-1")
+
+    await run_test(
+        marker,
+        frames_to_send=[
+            LLMFullResponseStartFrame(),
+            TTSAudioRawFrame(audio=b"\x00\x00", sample_rate=24000, num_channels=1),
+            LLMFullResponseStartFrame(),  # the next turn
+            TTSAudioRawFrame(audio=b"\x00\x00", sample_rate=24000, num_channels=1),
+        ],
+    )
+
+    assert calls[0] == 2
 
 
 @pytest.mark.asyncio

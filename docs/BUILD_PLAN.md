@@ -735,26 +735,75 @@ Phase 5 section. Unit-tested in `tests/unit/test_voice_bot.py`
 **0.7s is provisional, not final** — this needs the manual multi-person call check below (awkward
 pause Y/N) to confirm it's not now *too* long; no unit test can validate that trade-off.
 
-- [ ] 5.0 **Housekeeping before more features** *(new)*
+- [x] 5.0 **Housekeeping before more features** *(new)*
   - a. **CI:** confirm the latest GitHub Actions run on `main` is green. If it's red, fix that before anything else. (The `db`-fixture bug fixed in `683dc77` very likely broke CI from Phase 4 on.)
-    - **Partial progress, not the full gate:** local `main` is 34 commits ahead of `origin/main` and
-      hasn't been pushed since Phase 0, so the actual GitHub Actions run can't be checked without
-      pushing (not done here — that's a visible, somewhat irreversible action, left for you to
-      confirm). As the next-best check before landing 5.2's barge-in code, ran the full local offline
-      suite and found 3 real failures, unrelated to 5.2: `tests/unit/test_tools.py`'s
-      `TestCancelAppointment`/`TestRescheduleAppointment`/`TestCallToolInjectsCallerPhone` tests called
-      `book(...)` with no `now=` override, so they silently relied on `datetime.now()` landing before
-      their hardcoded `_a_free_slot()` date — exactly the "fixed `now`, no real `datetime.now()` in
-      tested logic" bug class this project has hit twice before (Phase 2's eval harness, noted in that
-      phase's close-out). It only surfaces once real wall-clock time passes the hardcoded date, which
-      it now has (today is 2026-11-11; the fixture assumed "tomorrow" relative to 2026-11-09). Fixed by
-      passing `now=NOW` to all three `book()` calls, matching every other call site in that file. Full
-      suite is green again (256 passed) and `ruff check` is clean — (b) and (c) still not done.
+    - **Still partial, by design — pushing needs your explicit go-ahead.** Local `main` is now far
+      ahead of `origin/main` (every Phase 5 commit through 5.7) and still hasn't been pushed since
+      Phase 0, so the actual GitHub Actions run still can't be checked without pushing — a visible
+      action on a shared remote, not something to do unilaterally. As the honest substitute, the full
+      local offline suite has been re-verified green after every single commit this phase (see each
+      task's own close-out note above), including the real bug found and fixed here earlier (the
+      `test_tools.py` `now=` fixture bug). **Ready to push whenever you say so** — nothing is blocking
+      it at this point.
   - b. **Make the latency numbers honest.** Two blind spots are documented in `SUMMARY.md` §7:
     1. `latency_report.py` logs one row per TTS clip, so a 3-sentence reply counts as 3 "turns". Change it to count only the **first** clip of each turn, since first audio is what the caller waits for.
     2. `speech_end` is stamped from `VADUserStoppedSpeakingFrame`, which is created `VAD_STOP_SECS` (0.7 s) *after* the caller's last word. Add a second column, `perceived_total_ms = total_latency_ms + VAD_STOP_SECS × 1000`, so the real wait is always visible next to the comparable-with-Phase-4 number.
   - c. **Test-suite budget:** run `pytest --durations=15`. If the real-embedding RAG fixture is built per test or per module, make it session-scoped, so the ~8 new test files in this phase don't push the suite past 30 s.
   - Tests: extend `tests/unit/test_metrics.py` (or add `tests/unit/test_latency_report.py`): a 3-clip turn counts once, the perceived column equals total + stop_secs, and negative readings are still dropped.
+
+  **(b)(1) — the "one row per TTS clip" bug was real and exactly as described.** `TTSLatencyMarker`
+  reset its "already marked" flag on every `TTSStartedFrame`, which fires once per *sentence* since
+  5.1's streaming TTS synthesizes sentence by sentence — a 3-sentence reply really was logged (and
+  would have been counted by `latency_report.py`) as 3 separate "turns." Fixed by resetting on
+  `LLMFullResponseStartFrame` instead (a true turn boundary, pushed once per turn by `AgentProcessor`,
+  before any TTS clip) rather than `TTSStartedFrame` (a clip boundary). Verified the fix is a real
+  regression guard, not an accidental pass, with a dedicated test sending two
+  `TTSStartedFrame`/`TTSAudioRawFrame` pairs inside one turn and asserting the mark only fires once,
+  plus a second test confirming a genuinely new turn *does* re-arm it.
+  - **Known, accepted side effect:** a 5.4 filler phrase played mid-turn (before any real content is
+    ready) now becomes the thing that gets marked as "first audio" for that turn, since it's an
+    `TTSAudioRawFrame` arriving before the real reply's own. This is arguably *more* honest, not a
+    bug — it's literally the first sound the caller hears for that turn. 5.3's reprompt/goodbye don't
+    get mismarked, since they play outside any `LLMFullResponseStartFrame`/`EndFrame` span entirely.
+  - **(b)(2)** `app.metrics.latency_summary()` gained a `vad_stop_secs` parameter: when given and
+    `total_latency_ms` has data, it adds a `perceived_total_ms` stage whose p50/p95 are
+    `total_latency_ms`'s own p50/p95 plus the fixed `vad_stop_secs × 1000` offset (adding a constant
+    to a percentile is equivalent to adding it to every raw value first — a shift, not a rescale — so
+    no need to re-derive from raw turns). `scripts/latency_report.py` passes `app.voice_bot.VAD_STOP_SECS`
+    in, so every future report shows both numbers side by side without any manual arithmetic.
+  - **Found and fixed the exact same stale-hardcoded-report-title bug Phase 3 already hit once, in a
+    sibling script, before it could bite again.** `scripts/latency_report.py`'s `REPORT_PATH`/
+    `REPORT_TITLE` were still hardcoded to `"Phase 4"` — meaning the very next time this ran (Phase
+    5's upcoming manual call check, which explicitly needs `reports/latency_phase5.md`) would have
+    silently written the wrong filename and title, the identical bug class Phase 3's close-out fixed
+    once for `scripts/run_evals.py`'s report title (which, on inspection, is *itself* still only
+    half-fixed — `app.evals.render_report`'s title is parameterized, but `scripts/run_evals.py` still
+    hardcodes `"Phase 3"` when calling it; left alone here, since fixing a *different* script wasn't
+    in scope for this task, but flagged for whoever touches that script next). `latency_report.py`
+    now takes the phase number as an optional second CLI argument (`python scripts/latency_report.py
+    [log_path] [phase]`), defaulting to `"5"` for the current phase, and derives both the path and the
+    title from it. Verified end-to-end against the real Phase 4 log data already in
+    `reports/voice_turns.jsonl` — correctly printed "Phase 5 latency report" with a correct
+    `perceived_total_ms` row (3192+700=3892 for p50, 9267+700=9967 for p95) — then deleted that
+    smoke-test output rather than committing stale Phase-4 data mislabeled as Phase 5's real report
+    (that comes from the actual upcoming manual calls).
+  - **(c) — the suggested fix doesn't actually change anything today, verified rather than assumed.**
+    The real-embedding fixture (`tests/integration/test_rag_retrieval.py`'s `faq_persist_dir`) was
+    already `scope="module"`, not per-test — and it's the *only* place in the whole test suite that
+    loads the real embedding model (confirmed by grepping every other RAG-adjacent test file; they all
+    use the `fake_embedding_function` fixture instead). With exactly one consuming module, "module"
+    and "session" scope produce the identical one-time load — `pytest --durations` confirms a single
+    ~19-23s setup cost either way, not per-test or per-additional-module repetition. Raised it to
+    `scope="session"` anyway as a zero-cost, zero-risk safety net for a hypothetical *second* test
+    module that someday also needs the real model (today, none does) — but note this alone wouldn't
+    even help that future case, since a session-scoped fixture is still only *visible* to other files
+    if it's moved into `tests/conftest.py`; left as a local fixture since there's no second consumer
+    yet to justify that move (YAGNI). The offline suite's ~26-30s runtime (mentioned as a watch-item
+    since Phase 3) is **not actually fixable by fixture scoping** — it's an inherent one-time cost of
+    loading a real multilingual embedding model on CPU, already paid exactly once per run.
+  - Tests: two new `TTSLatencyMarker` tests in `test_turn_metrics.py` (per-turn not per-clip, re-arms
+    on the next turn) and four new `TestPerceivedTotalLatency` cases in `test_metrics.py`.
+  - Full offline suite: 346 passed, `ruff check`/`ruff format` clean.
 
 - [x] 5.2 **Barge-in:** when the caller starts speaking, stop TTS immediately and drop the queued audio.
   - **Research result (changes the old plan):** swapping TTS to WebSocket is **not** needed. Pipecat's base `TTSService._handle_interruption()` already resets text aggregation and drops queued audio for any TTS service, HTTP included. What's missing is that nothing pushes an `InterruptionFrame` when the caller starts talking.

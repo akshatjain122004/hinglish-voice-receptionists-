@@ -41,7 +41,6 @@ from pipecat.frames.frames import (
     TranscriptionFrame,
     TTSAudioRawFrame,
     TTSSpeakFrame,
-    TTSStartedFrame,
     VADUserStartedSpeakingFrame,
     VADUserStoppedSpeakingFrame,
 )
@@ -422,9 +421,16 @@ class SilenceProcessor(FrameProcessor):
 class TTSLatencyMarker(FrameProcessor):
     """Marks the first TTS audio byte of a turn, and logs the completed turn.
 
-    Sits right after the TTS stage. Only the first `TTSAudioRawFrame`
-    following each `TTSStartedFrame` is marked, so a multi-sentence reply
-    doesn't re-log partway through.
+    Sits right after the TTS stage. Only the first `TTSAudioRawFrame` of the
+    whole *turn* is marked - BUILD_PLAN 5.0b: resetting on every
+    `TTSStartedFrame` (as this used to) re-arms on every TTS clip, and since
+    5.1's streaming synthesizes sentence by sentence, a 3-sentence reply has
+    3 `TTSStartedFrame`s, so it was logging (and counting, in
+    `latency_report.py`) one "turn" per sentence instead of one per real
+    turn. Resetting on `LLMFullResponseStartFrame` instead (pushed once per
+    turn by `AgentProcessor`, win before any TTS clip) ties the reset to a
+    turn boundary, not a clip boundary - first audio is what the caller
+    actually waits for.
     """
 
     def __init__(
@@ -433,15 +439,15 @@ class TTSLatencyMarker(FrameProcessor):
         super().__init__(**kwargs)
         self.turn_tracker = turn_tracker
         self.session_id = session_id
-        self._marked_this_utterance = False
+        self._marked_this_turn = False
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
 
-        if isinstance(frame, TTSStartedFrame):
-            self._marked_this_utterance = False
-        elif isinstance(frame, TTSAudioRawFrame) and not self._marked_this_utterance:
-            self._marked_this_utterance = True
+        if isinstance(frame, LLMFullResponseStartFrame):
+            self._marked_this_turn = False
+        elif isinstance(frame, TTSAudioRawFrame) and not self._marked_this_turn:
+            self._marked_this_turn = True
             self.turn_tracker.mark_tts_first_audio(time.time(), session_id=self.session_id)
 
         await self.push_frame(frame, direction)

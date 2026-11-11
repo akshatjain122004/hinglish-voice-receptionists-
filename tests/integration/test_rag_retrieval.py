@@ -54,7 +54,7 @@ OUT_OF_SCOPE_QUESTIONS = [
 ]
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="session")
 def faq_persist_dir(tmp_path_factory):
     persist_dir = tmp_path_factory.mktemp("rag_retrieval_chroma")
     rag.ingest(DATA / "faqs.md", persist_dir=persist_dir)

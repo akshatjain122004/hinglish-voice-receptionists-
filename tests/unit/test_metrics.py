@@ -225,6 +225,45 @@ class TestLatencySummary:
         assert "llm_latency_ms" not in summary
 
 
+class TestPerceivedTotalLatency:
+    """BUILD_PLAN 5.0b: speech_end is stamped VAD_STOP_SECS *after* the
+    caller's actual last word, so the real wait the caller feels is
+    total_latency_ms + that offset — this makes it visible as its own
+    stage, next to the comparable-with-Phase-4 total_latency_ms."""
+
+    def test_perceived_total_equals_total_plus_the_vad_stop_offset(self):
+        turns = [{"total_latency_ms": 1000.0}, {"total_latency_ms": 2000.0}]
+
+        summary = latency_summary(turns, vad_stop_secs=0.7)
+
+        assert summary["perceived_total_ms"]["p50"] == pytest.approx(1700.0)
+        assert summary["total_latency_ms"]["p50"] == 1000.0
+
+    def test_perceived_total_absent_when_vad_stop_secs_not_given(self):
+        summary = latency_summary([{"total_latency_ms": 1000.0}])
+
+        assert "perceived_total_ms" not in summary
+
+    def test_perceived_total_absent_when_total_latency_ms_itself_is_absent(self):
+        summary = latency_summary([{"llm_latency_ms": 100.0}], vad_stop_secs=0.7)
+
+        assert "perceived_total_ms" not in summary
+
+    def test_perceived_total_carries_the_same_n_and_dropped_as_total(self):
+        turns = [
+            {"total_latency_ms": 1000.0},
+            {"total_latency_ms": -50.0},
+            {"total_latency_ms": 2000.0},
+        ]
+
+        summary = latency_summary(turns, vad_stop_secs=0.7)
+
+        assert summary["perceived_total_ms"]["n"] == summary["total_latency_ms"]["n"] == 2
+        assert (
+            summary["perceived_total_ms"]["dropped"] == summary["total_latency_ms"]["dropped"] == 1
+        )
+
+
 class TestConfigureFileSink:
     def test_logged_turns_are_persisted_as_parseable_jsonl(self, tmp_path):
         log_path = tmp_path / "nested" / "turns.jsonl"

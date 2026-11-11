@@ -261,3 +261,33 @@ Design choices and discoveries worth remembering, added as phases progress.
     since Phase 2) only protects a tool call from the wrong number, it does nothing to stop the model
     asking the caller for it in conversation - the prompt line is the only thing preventing that, so
     it stayed, just terser.
+- **5.0: `TTSLatencyMarker` resets on a turn boundary, not a TTS-clip boundary.** It used to reset its
+  "already marked" flag on every `TTSStartedFrame`, which fires once per *sentence* since 5.1's
+  streaming TTS - a 3-sentence reply was genuinely logged (and would be counted by
+  `latency_report.py`) as 3 separate "turns." Fixed by resetting on `LLMFullResponseStartFrame`
+  instead (pushed once per turn, before any TTS clip). Known, accepted side effect: a 5.4 filler
+  phrase played mid-turn now becomes what gets marked as "first audio" for that turn, since it's the
+  first `TTSAudioRawFrame` to arrive - arguably more honest, not a bug, since it's literally the first
+  sound the caller hears. 5.3's reprompt/goodbye are unaffected (they play outside any
+  `LLMFullResponseStartFrame`/`EndFrame` span).
+  - `app.metrics.latency_summary()` gained a `vad_stop_secs` parameter: when given, it adds a
+    `perceived_total_ms` stage (`total_latency_ms`'s own p50/p95 plus the fixed offset) next to the
+    comparable-with-Phase-4 number, since `speech_end` is stamped `VAD_STOP_SECS` after the caller's
+    actual last word and `total_latency_ms` alone understates the real wait.
+  - **`scripts/latency_report.py` had the identical stale-hardcoded-title bug Phase 3 already fixed
+    once, in a sibling script, caught before it could bite again.** Its `REPORT_PATH`/`REPORT_TITLE`
+    were still `"Phase 4"` - the next run (Phase 5's upcoming manual call check) would have silently
+    produced the wrong file. Now takes the phase number as an optional CLI arg, defaulting to `"5"`.
+    (`scripts/run_evals.py` has the same unfixed pattern - its report title parameter exists but the
+    script itself still hardcodes `"Phase 3"` - left alone since fixing a different script wasn't in
+    scope here, flagged for whoever touches it next.)
+  - **The suggested test-fixture-scoping fix for the suite's ~26-30s runtime doesn't actually change
+    anything today, verified rather than assumed.** The real-embedding fixture
+    (`test_rag_retrieval.py`'s `faq_persist_dir`) was already `scope="module"`, and it's the only
+    place in the suite that loads the real model - with one consuming module, "module" and "session"
+    scope are identical (confirmed via `pytest --durations`: one ~19-25s setup cost either way).
+    Raised to `scope="session"` anyway as a zero-cost safety net for a hypothetical future second
+    consumer; left as a local fixture rather than moved to `conftest.py`, since session scope alone
+    wouldn't make it visible across files and there's no second consumer yet to justify that move.
+    The runtime itself isn't fixable by fixture scoping - it's the inherent, already-amortized cost of
+    loading a real multilingual embedding model on CPU once per run.

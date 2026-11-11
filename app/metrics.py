@@ -189,7 +189,9 @@ def percentile(values: list[float], p: float) -> float:
 _STAGE_KEYS = ("stt_latency_ms", "llm_latency_ms", "tts_latency_ms", "total_latency_ms")
 
 
-def latency_summary(turns: list[dict[str, Any]]) -> dict[str, dict[str, float]]:
+def latency_summary(
+    turns: list[dict[str, Any]], *, vad_stop_secs: float = 0.0
+) -> dict[str, dict[str, float]]:
     """p50/p95/n per pipeline stage, across whichever turns have that stage.
 
     A negative duration is physically impossible — a symptom of
@@ -198,6 +200,16 @@ def latency_summary(turns: list[dict[str, Any]]) -> dict[str, dict[str, float]]:
     the previous turn's marks finish — see docs/BUILD_PLAN.md phase 4
     notes), not a real measurement. Dropped rather than skewing the
     percentiles of the turns that are legitimate; `dropped` counts how many.
+
+    `vad_stop_secs` adds a `perceived_total_ms` stage next to
+    `total_latency_ms` (BUILD_PLAN 5.0b): `speech_end` is stamped from
+    `VADUserStoppedSpeakingFrame`, which Silero only creates `vad_stop_secs`
+    *after* the caller's actual last word (see `app.voice_bot.VAD_STOP_SECS`'s
+    docstring) — so `total_latency_ms` alone understates what the caller
+    really waits. Adding a fixed offset to every already-computed percentile
+    is equivalent to adding it to every raw value first (it's a shift, not a
+    rescale) without re-deriving them. Left out entirely when `vad_stop_secs`
+    is 0 (the default) or `total_latency_ms` itself has no data.
     """
     summary = {}
     for stage in _STAGE_KEYS:
@@ -210,6 +222,15 @@ def latency_summary(turns: list[dict[str, Any]]) -> dict[str, dict[str, float]]:
             "p95": percentile(values, 95),
             "n": len(values),
             "dropped": len(raw_values) - len(values),
+        }
+    if vad_stop_secs and "total_latency_ms" in summary:
+        offset_ms = vad_stop_secs * 1000
+        total = summary["total_latency_ms"]
+        summary["perceived_total_ms"] = {
+            "p50": total["p50"] + offset_ms,
+            "p95": total["p95"] + offset_ms,
+            "n": total["n"],
+            "dropped": total["dropped"],
         }
     return summary
 
