@@ -205,3 +205,48 @@ async def test_fallback_message_is_still_spoken_when_max_tool_rounds_hit(db):
     text_frames = [f for f in down_frames if isinstance(f, TextFrame)]
     assert len(text_frames) == 1
     assert text_frames[0].text == FALLBACK_MESSAGE
+
+
+@pytest.mark.asyncio
+async def test_noise_transcript_never_reaches_the_agent():
+    """BUILD_PLAN 5.8: STT noise (empty/punctuation-only/1-char, per
+    app.stt_noise.is_noise) must not start a turn at all - no tool-calling
+    loop, no LLMFullResponse frames, nothing for TTS to speak."""
+    processor = AgentProcessor(Agent(FakeLLM(responses=[]), now=NOW))
+
+    down_frames, _ = await run_test(
+        processor,
+        frames_to_send=[
+            TranscriptionFrame(text="।", user_id="caller", timestamp="2026-11-09T10:00:00Z"),
+        ],
+    )
+
+    # The noisy TranscriptionFrame itself is still forwarded unchanged (it's
+    # also a TextFrame - pipecat's own hierarchy - so it's excluded here);
+    # nothing *new* from starting a turn should appear alongside it.
+    assert not any(
+        isinstance(f, (LLMFullResponseStartFrame, LLMFullResponseEndFrame)) for f in down_frames
+    )
+    new_text_frames = [
+        f for f in down_frames if isinstance(f, TextFrame) and not isinstance(f, TranscriptionFrame)
+    ]
+    assert new_text_frames == []
+
+
+@pytest.mark.asyncio
+async def test_short_real_confirmation_word_still_starts_a_turn():
+    """A short "yes" like "haan" is a real booking confirmation (CLAUDE.md's
+    non-negotiable confirm-before-booking rule) and must still reach the
+    agent, even though it's well under a word-count threshold."""
+    agent = Agent(FakeLLM(responses=[LLMResponse(content="Theek hai, confirm.")]), now=NOW)
+    processor = AgentProcessor(agent)
+
+    down_frames, _ = await run_test(
+        processor,
+        frames_to_send=[
+            TranscriptionFrame(text="haan", user_id="caller", timestamp="2026-11-09T10:00:00Z"),
+        ],
+    )
+
+    text_frames = [f for f in down_frames if isinstance(f, TextFrame)]
+    assert [f.text for f in text_frames] == ["Theek hai, confirm."]

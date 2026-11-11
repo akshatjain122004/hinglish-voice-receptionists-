@@ -810,9 +810,34 @@ pause Y/N) to confirm it's not now *too* long; no unit test can validate that tr
   Phase 5's multi-person manual check further down this file, not something a unit/integration test
   can establish.
 
-- [ ] 5.8 **Handle STT noise:** if the transcript is empty or under 2 characters (after stripping punctuation such as `।` and `.`), ignore it instead of sending it to the LLM.
+- [x] 5.8 **Handle STT noise:** if the transcript is empty or under 2 characters (after stripping punctuation such as `।` and `.`), ignore it instead of sending it to the LLM.
   - Count **characters (code points) after stripping punctuation**, and test real short words: `"haan"`, `"हाँ"`, `"जी"`, `"ok"` must all **pass**, because a short "yes" is a booking confirmation. Only `""`, `"।"`, `"."` and `"a"` get dropped.
   - Known limitation (don't build for it yet): barge-in fires on VAD *start*, before any transcript exists, so a cough can still interrupt the bot. Track it as the "false interruption" column in the manual calls. If it turns out to be a real problem, the fixes are raising `start_secs`, or interrupting only once STT returns at least one word (check what interruption options Pipecat 1.15.0 offers before writing your own).
+
+  **Built as a new pure module, `app/stt_noise.py`'s `is_noise(text) -> bool`** (no pipecat
+  imports, same split as `app/metrics.py`/`app/timeparse.py`), wired in with a one-line swap in
+  `app/voice_bot.py`'s `AgentProcessor`: `frame.text.strip()` (the old, too-naive emptiness check)
+  became `not is_noise(frame.text)`.
+  - **Why `str.isalnum()` per character is the wrong filter, and what to use instead:** the first
+    instinct was to strip anything that isn't `.isalnum()`, but Devanagari vowel signs and the
+    candrabindu (e.g. the `ा`/`ँ` in `हाँ`) are Unicode category `Mc`/`Mn` (combining marks), not
+    `L`/`N` — `.isalnum()` returns `False` for them, which would strip "हाँ" down to just "ह" (1
+    code point) and wrongly drop a real booking confirmation. Fixed by stripping on Unicode
+    *category* instead (`unicodedata.category(ch)[0] != "P"`, plus whitespace), which keeps
+    combining marks as part of their letter while still dropping actual punctuation (ASCII and
+    Devanagari `।`/`॥` alike).
+  - Tests: `tests/unit/test_stt_noise.py` (the pure function, exactly the cases BUILD_PLAN lists
+    plus a few more: `"na"`, `"नहीं"`, trailing punctuation/whitespace variants) and two new
+    integration tests in `tests/integration/test_voice_text_equivalence.py` confirming the wiring:
+    a noisy transcript never starts a turn (no `LLMFullResponseStartFrame`/`EndFrame`, no new
+    `TextFrame`), and a short real word like `"haan"` still does. The first version of the "never
+    starts a turn" test was wrong, not the implementation — it asserted no `TextFrame` appeared at
+    all, but `TranscriptionFrame` is itself a `TextFrame` subclass in Pipecat's own frame hierarchy
+    (confirmed by reading `pipecat.frames.frames`), so the still-forwarded noisy frame tripped the
+    assertion. Fixed the test to exclude the original `TranscriptionFrame` instance from that check.
+  - Full offline suite: 258 passed (256 + 2 new), `ruff check`/`ruff format` clean. The known
+    cough-during-barge-in limitation noted above is unchanged by this task, as planned — tracked in
+    the manual-calls table further down, not built around here.
 
 - [ ] 5.3 **Silence handling:** after ~5 s of silence, say "Hello, kya aap line par hain?" After a second silence, say goodbye and end the session.
   - The silence timer starts when the **bot finishes speaking** (`BotStoppedSpeakingFrame`) and resets when the caller starts speaking. It must **never** run while the agent is thinking or running a tool, or a slow `answer_faq` would trigger "are you there?" mid-answer.

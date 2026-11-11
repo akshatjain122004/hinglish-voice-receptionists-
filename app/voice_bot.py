@@ -56,6 +56,7 @@ from app.agent import FALLBACK_MESSAGE, Agent, SarvamLLMClient
 from app.config import get_settings
 from app.db import CallLog, get_session
 from app.metrics import TurnTracker, ensure_file_sink
+from app.stt_noise import is_noise
 
 OnToolCall = Callable[[str, dict[str, Any], dict[str, Any]], None]
 OnTurn = Callable[[str, str], None]
@@ -175,7 +176,7 @@ class AgentProcessor(FrameProcessor):
             await self.push_frame(frame, direction)
             return
 
-        if isinstance(frame, TranscriptionFrame) and frame.text.strip():
+        if isinstance(frame, TranscriptionFrame) and not is_noise(frame.text):
             self._interrupted = False
 
             # Never cancel a booking halfway (BUILD_PLAN 5.2's #1 concern):

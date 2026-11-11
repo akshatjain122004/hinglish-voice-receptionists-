@@ -159,3 +159,10 @@ Design choices and discoveries worth remembering, added as phases progress.
     removing `frame.interruptible = False` and confirming the booking test fails (the
     turn gets cut off before `LLMFullResponseEndFrame`, leaving TTS's turn context open)
     — see the task's close-out note in `docs/BUILD_PLAN.md` for the full before/after.
+- **5.8: STT noise filtering strips by Unicode category, not `str.isalnum()`.**
+  `app/stt_noise.py`'s `is_noise()` drops a transcript once it's under 2 code points
+  after stripping whitespace and punctuation. The punctuation strip must use
+  `unicodedata.category(ch)[0] != "P"`, not `.isalnum()` per character — Devanagari
+  vowel signs and the candrabindu (the combining marks inside "हाँ") are category
+  `Mc`/`Mn`, which `.isalnum()` treats as non-alphanumeric and would strip away,
+  undercounting a real short Hindi "yes" and wrongly dropping it as noise.

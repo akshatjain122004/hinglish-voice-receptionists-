@@ -5,7 +5,8 @@ up cold — a senior developer, a future version of the author, or Claude Code i
 session. It covers what the project is, what's been built, exactly how each piece was
 built (including the bugs hit and how they were fixed), what's known-broken or
 deferred, and what to do next. Written 2026-11-10, at the end of Phase 5's first two
-tasks (5.1 and 5.5); updated 2026-11-11 after task 5.2 (barge-in) landed.
+tasks (5.1 and 5.5); updated 2026-11-11 after tasks 5.2 (barge-in) and 5.8 (STT noise)
+landed.
 
 Read this alongside `CLAUDE.md` (working conventions) and `docs/BUILD_PLAN.md` (the
 authoritative, task-by-task plan with its own close-out notes per task — this file
@@ -39,9 +40,9 @@ Caller → Twilio/Plivo (audio stream) → Pipecat pipeline → Silero VAD → S
 constraint — live API calls and evals cost real (small) amounts of money, so they're
 only run when explicitly asked for, never automatically.
 
-**Current phase:** Phase 5 (Hinglish + latency hardening), in progress. Tasks 5.1, 5.5
-and 5.2 (barge-in) are done; 5.0 (housekeeping), 5.3, 5.4, 5.6-5.9 are not started yet.
-See §5.6 below for exactly where that stands.
+**Current phase:** Phase 5 (Hinglish + latency hardening), in progress. Tasks 5.1,
+5.5, 5.2 (barge-in) and 5.8 (STT noise) are done; 5.0 (housekeeping), 5.3, 5.4, 5.6,
+5.7, 5.9 are not started yet. See §5.6 below for exactly where that stands.
 
 ---
 
@@ -364,9 +365,10 @@ remaining action item to close Phase 4's gate.
 silence, good at language-mixing. Gate: p50 ≤1.5s / p95 ≤2.5s turn latency, ≥9/10
 manual calls book correctly, barge-in + silence tests pass, eval pass rate ≥85%.
 
-Nine tasks total (5.1–5.9). **Two done so far: 5.5 and 5.1** (worked in that order —
-5.5 first because it was a confirmed, reproduced bug from Phase 4's live test; 5.1
-second because streaming is the single biggest latency lever, per the table above).
+Nine tasks total (5.1–5.9). **Four done so far: 5.5, 5.1, 5.2 and 5.8**, following
+BUILD_PLAN.md's own recommended order (`5.0 → 5.2 → 5.8 → 5.3 → 5.4 → 5.6 → 5.9 → 5.7
+→ 5.11 → 5.10`) from 5.2 onward; 5.5 and 5.1 landed earlier, before that order was
+written.
 
 #### Task 5.5 — Tune the VAD so it doesn't cut people off — ✅ Done
 
@@ -596,6 +598,43 @@ and `ruff format` both clean. Not yet committed or pushed.
 noise/echo) can only be judged on a real call — that's Phase 5's multi-person manual
 call check, still further down the task list.
 
+#### Task 5.8 — Ignore STT noise — ✅ Done
+
+**Goal (from BUILD_PLAN.md):** empty/<2-character transcripts (after stripping
+punctuation) shouldn't reach the LLM, but a short real "yes" (`"haan"`, `"हाँ"`,
+`"जी"`, `"ok"`) must still get through — it's a booking confirmation.
+
+**What got built:** `app/stt_noise.py`'s `is_noise(text) -> bool` — a new pure
+module (no pipecat imports, same split as `app/metrics.py`), wired into
+`AgentProcessor` with a one-line swap: the old `frame.text.strip()` truthiness
+check became `not is_noise(frame.text)`.
+
+**Real bug caught before it shipped:** the first instinct was to strip anything
+that isn't `str.isalnum()`. That's wrong for Devanagari — the vowel signs and
+candrabindu inside "हाँ" are Unicode category `Mc`/`Mn` (combining marks), which
+`.isalnum()` treats as non-alphanumeric, stripping "हाँ" down to a single code
+point and wrongly dropping a real confirmation as noise. Fixed by stripping on
+Unicode *category* (`unicodedata.category(ch)[0] != "P"`) instead, which keeps
+combining marks attached to their letter while still dropping actual punctuation
+(ASCII and Devanagari `।`/`॥` alike).
+
+**Also caught a wrong test, not a wrong implementation:** the first version of an
+integration test asserting "no TextFrame appears" for a dropped noise frame failed
+— not because the filter was wrong, but because `TranscriptionFrame` is itself a
+`TextFrame` subclass in Pipecat's own hierarchy, so the still-forwarded (but
+turn-skipped) noisy frame tripped the same isinstance check. Fixed the test to
+exclude the original `TranscriptionFrame` instance from that assertion.
+
+**Tests:** `tests/unit/test_stt_noise.py` (the pure function — all the cases
+BUILD_PLAN lists plus a few more) and two new cases in
+`tests/integration/test_voice_text_equivalence.py` confirming the wiring: a noisy
+transcript starts no turn at all, a short real word still does.
+
+**Carried forward unchanged, as planned:** the cough-during-barge-in limitation
+(barge-in fires on VAD start, before any transcript exists, so noise can still
+interrupt the bot) is untouched by this task — tracked as a column in the manual
+multi-person call check, not built around here.
+
 #### Remaining Phase 5 tasks (not started)
 
 - **5.3 — Silence handling:** ~5s silence → "Hello, kya aap line par hain?"; a
@@ -605,7 +644,6 @@ call check, still further down the task list.
 - **5.6 — Spoken-output normalization:** `17:30` → "saade paanch baje", `₹500` →
   "paanch sau rupaye", phone numbers in digit pairs. Pure, testable function.
 - **5.7 — Shorten + cache the system prompt** to reduce LLM time-to-first-token.
-- **5.8 — Ignore STT noise:** empty/<2-character transcripts shouldn't reach the LLM.
 - **5.9 — `transfer_to_human` takes a message + promises a callback** (a real call
   transfer only comes in Phase 8 with Twilio).
 
