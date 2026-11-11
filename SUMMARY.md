@@ -41,10 +41,11 @@ constraint — live API calls and evals cost real (small) amounts of money, so t
 only run when explicitly asked for, never automatically.
 
 **Current phase:** Phase 5 (Hinglish + latency hardening), in progress. All nine
-code tasks (5.1-5.9) and 5.0's housekeeping are done (except pushing to `origin` for
-a real CI check, which needs your go-ahead). Only the manual multi-person call
-checks and the eval-related tasks (5.10, 5.11 — both need a live, paid LLM run)
-remain before the phase's gate can be assessed. See §5.6 below for exactly where
+code tasks (5.1-5.9), 5.0's housekeeping and 5.11 (5 new code-switching eval cases)
+are done (except pushing to `origin` for a real CI check, which needs your
+go-ahead). Only the manual multi-person call checks and 5.10 (the eval-debt pass —
+needs a live, paid LLM run) remain before the phase's gate can be assessed. See
+§5.6 below for exactly where
 that stands.
 
 ---
@@ -949,16 +950,49 @@ documented blind spots), and check the offline suite's ~26-30s runtime against i
 
 **Final state:** 346 tests passing, `ruff check`/`ruff format` clean.
 
-#### Phase 5: all nine code tasks done, plus housekeeping
+#### Task 5.11 — 5 code-switching eval cases — ✅ Done
+
+**Goal:** add 5 cases to `data/test_calls.yaml` mixing English and Hindi/Hinglish
+within one utterance (e.g. "mujhe tomorrow evening ka appointment chahiye, cleaning
+ke liye"), before 5.10's live run so one paid run covers both.
+
+**Added as a new `code_switch` category, not folded into the existing
+`language_switch` one** — the two test different things. `language_switch` (already
+2 cases) is the caller changing *which language* they speak between turns;
+`code_switch` is English and Hindi/Hinglish mixed *within* one sentence. Since the
+eval report already breaks results down by category, keeping them separate makes a
+future failure cluster easy to spot. Nothing enforces the category list as an enum
+anywhere in the codebase, so this needed no code change — just a note in the YAML's
+own schema comment.
+- `code_switch_001`: the plan's own example, completed into a full booking (tests
+  `part_of_day` resolving correctly when the period word — "evening" — is English
+  inside an otherwise Hinglish sentence).
+- `code_switch_002`/`003`/`004`: one case each for the FAQ, reschedule and cancel
+  tools, so the 5 cases don't all exercise the same tool path.
+- `code_switch_005`: both the weekday and the period in English ("Friday evening")
+  — the inverse emphasis from `code_switch_001`.
+- Sanity-checked offline (no live LLM call, free) that `app.timeparse.parse()` can
+  already mechanically handle this phrasing — what the eval itself tests is whether
+  the LLM *extracts and passes* similarly-shaped text, which only a live run can
+  confirm.
+
+**Final state:** `data/test_calls.yaml` now has 35 cases (was 30); 346 tests passing
+(unchanged — this task only adds eval data, no code), `ruff check` clean.
+
+**Not run here, deferred to 5.10 as the plan itself says:** the actual live eval
+pass against these new cases.
+
+#### Phase 5: all nine code tasks plus housekeeping and 5.11 done
 
 **Phase 5's complete-when gate** (not yet met): p50 ≤1.5s / p95 ≤2.5s turn latency,
 ≥9/10 manual calls book correctly, barge-in + silence tests pass, eval pass rate
 ≥85%. The latency numbers haven't been re-measured since 5.1 landed — that's a
 natural next step now that every code task is in, to see how much the streaming
 work (5.1), the VAD tuning (5.5) and this session's reasoning-mode fix (5.7) moved
-the needle versus Phase 4's baseline. The remaining gate items are 5.11 (5 new
-code-switching eval cases), 5.10 (the eval-debt pass), and the manual multi-person
-call checks — all still ahead, per BUILD_PLAN's recommended order.
+the needle versus Phase 4's baseline. The remaining gate items are 5.10 (the
+eval-debt pass, which now also covers 5.11's new cases in the same live run) and the
+manual multi-person call checks — both need either a live paid LLM run or a human
+voice, so neither happened automatically this session.
 
 ### 5.6 — Phases 6–10 — ⬜ Not started
 

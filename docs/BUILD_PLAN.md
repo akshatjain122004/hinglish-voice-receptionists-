@@ -1160,7 +1160,36 @@ pause Y/N) to confirm it's not now *too* long; no unit test can validate that tr
     and a pipeline-wiring test in `test_turn_metrics.py`.
   - Full offline suite: 340 passed, `ruff check`/`ruff format` clean.
 
-- [ ] 5.11 **Add 5 code-switching eval cases** to `test_calls.yaml` (e.g. "mujhe tomorrow evening ka appointment chahiye, cleaning ke liye"). This happens before 5.10's live run, so one paid run covers both.
+- [x] 5.11 **Add 5 code-switching eval cases** to `test_calls.yaml` (e.g. "mujhe tomorrow evening ka appointment chahiye, cleaning ke liye"). This happens before 5.10's live run, so one paid run covers both.
+
+  **Added as a new `code_switch` category, not folded into the existing `language_switch`
+  one.** The two test different things: `language_switch` (already in the file, 2 cases) is the
+  caller changing which language they speak *between* turns; these 5 new cases mix English and
+  Hindi/Hinglish *within one utterance* (true code-switching) — distinct enough, and the eval
+  report already breaks results down by `category`, that keeping them separate makes a future
+  failure cluster easy to spot. Nothing enforces the category list as an enum anywhere in the
+  codebase (checked `tests/unit/test_evals.py`, which even uses a placeholder `"x"` category in its
+  own fixtures), so adding a new value needed no code change — just documenting it in the YAML's own
+  schema comment at the top of the file.
+  - `code_switch_001`: the plan's own example almost verbatim, completed into a full booking (tests
+    `part_of_day` resolving correctly when the period word is English - "evening" - inside an
+    otherwise Hinglish sentence).
+  - `code_switch_002` (FAQ), `code_switch_003` (reschedule), `code_switch_004` (cancel): one case per
+    remaining tool the project has, each with an English clause wrapped around Hindi content words,
+    so the 5 cases don't all exercise the same tool path.
+  - `code_switch_005`: both the weekday *and* the period given in English ("Friday evening") inside a
+    Hinglish sentence, the inverse emphasis from `code_switch_001`.
+  - Sanity-checked (offline, free - no live LLM call) that `app.timeparse.parse()` itself can already
+    handle this phrasing mechanically (`"tomorrow evening saade paanch"`, `"Friday evening 6:30"`,
+    `"next Friday shaam 6 baje"` all parsed correctly) before trusting these cases to a live run —
+    what the eval actually tests is whether the LLM *extracts and passes* similarly-shaped text, which
+    only a live run can confirm.
+  - `data/test_calls.yaml` now has 35 cases (was 30), still well above Phase 0's `>= 20` minimum.
+  - Full offline suite: 346 passed (unchanged — this task only adds eval data, no code), `ruff check`
+    clean.
+  - **Not run here, deferred to 5.10 as the plan itself says:** the actual live eval pass against
+    these new cases, since one paid run should cover both 5.11's new cases and 5.10's eval-debt pass
+    together.
 
 - [ ] 5.10 **Eval-debt pass** *(new)*. Phase 5's gate needs ≥ 85%, and the project has been at 73%.
   - a. Build the missing **language-match checker** (C5).

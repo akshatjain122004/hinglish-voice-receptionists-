@@ -7,7 +7,11 @@
 # Schema:
 #   id: unique string
 #   category: booking | no_slot | faq | reschedule | cancel |
-#             language_switch | unclear | off_topic | human_handoff
+#             language_switch | code_switch | unclear | off_topic | human_handoff
+#             (code_switch: English and Hindi/Hinglish mixed *within* one
+#             utterance, e.g. "tomorrow evening ka appointment chahiye" -
+#             distinct from language_switch, where the caller changes
+#             language *between* turns)
 #   language: hinglish | hindi | english
 #   turns: ordered list of caller utterances (one session)
 #   expected:
@@ -411,3 +415,76 @@
       - tool: transfer_to_human
         args: {}
     max_sentences: 2
+
+- id: code_switch_001
+  category: code_switch
+  language: hinglish
+  turns:
+    - "Mujhe tomorrow evening ka appointment chahiye, cleaning ke liye."
+    - "Saade paanch wala slot le lete hain."
+    - "Mera naam Kabir hai."
+    - "Haan, confirm kar do."
+  expected:
+    tool_calls:
+      - tool: check_slots
+        args: { service: cleaning, part_of_day: evening }
+      - tool: book_appointment
+        args: { service: cleaning }
+    max_sentences: 2
+    must_not_hallucinate: true
+    notes: "English date/time words (tomorrow evening) mixed into an otherwise Hinglish sentence - part_of_day must still resolve to evening."
+
+- id: code_switch_002
+  category: code_switch
+  language: hinglish
+  turns:
+    - "Do you guys clinic mein parking ki facility provide karte hain?"
+  expected:
+    tool_calls:
+      - tool: answer_faq
+        args: { question: "parking" }
+    max_sentences: 2
+    must_not_hallucinate: true
+    notes: "English question structure wrapped around Hindi content words."
+
+- id: code_switch_003
+  category: code_switch
+  language: hinglish
+  turns:
+    - "I need to reschedule mera appointment, next Friday ko kar do please."
+    - "Shaam ko 6 baje theek rahega."
+  expected:
+    tool_calls:
+      - tool: reschedule_appointment
+        args: {}
+    max_sentences: 2
+    must_not_hallucinate: true
+
+- id: code_switch_004
+  category: code_switch
+  language: hinglish
+  turns:
+    - "Can you please cancel kar do mera booking, I won't be able to come kal."
+  expected:
+    tool_calls:
+      - tool: cancel_appointment
+        args: {}
+    max_sentences: 2
+
+- id: code_switch_005
+  category: code_switch
+  language: hinglish
+  turns:
+    - "Filling ke liye Friday evening mein koi slot hai kya?"
+    - "6:30 wala le lenge."
+    - "Naam Zara hai, confirm kar do."
+    - "Haan theek hai."
+  expected:
+    tool_calls:
+      - tool: check_slots
+        args: { service: filling, part_of_day: evening }
+      - tool: book_appointment
+        args: { service: filling }
+    max_sentences: 2
+    must_not_hallucinate: true
+    notes: "Weekday name and period both given in English (Friday evening), service and the rest of the sentence in Hinglish."
