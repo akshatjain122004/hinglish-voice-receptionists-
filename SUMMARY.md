@@ -6,7 +6,8 @@ session. It covers what the project is, what's been built, exactly how each piec
 built (including the bugs hit and how they were fixed), what's known-broken or
 deferred, and what to do next. Written 2026-11-10, at the end of Phase 5's first two
 tasks (5.1 and 5.5); updated 2026-11-11 after tasks 5.2 (barge-in), 5.8 (STT noise),
-5.3 (silence handling) and 5.4 (filler for slow tools) landed.
+5.3 (silence handling), 5.4 (filler for slow tools) and 5.6 (spoken-output
+normalization) landed.
 
 Read this alongside `CLAUDE.md` (working conventions) and `docs/BUILD_PLAN.md` (the
 authoritative, task-by-task plan with its own close-out notes per task — this file
@@ -41,9 +42,9 @@ constraint — live API calls and evals cost real (small) amounts of money, so t
 only run when explicitly asked for, never automatically.
 
 **Current phase:** Phase 5 (Hinglish + latency hardening), in progress. Tasks 5.1,
-5.5, 5.2 (barge-in), 5.8 (STT noise), 5.3 (silence handling) and 5.4 (filler for slow
-tools) are done; 5.0 (housekeeping), 5.6, 5.7, 5.9 are not started yet. See §5.6
-below for exactly where that stands.
+5.5, 5.2 (barge-in), 5.8 (STT noise), 5.3 (silence handling), 5.4 (filler for slow
+tools) and 5.6 (spoken-output normalization) are done; 5.0 (housekeeping), 5.7, 5.9
+are not started yet. See §5.6 below for exactly where that stands.
 
 ---
 
@@ -366,7 +367,7 @@ remaining action item to close Phase 4's gate.
 silence, good at language-mixing. Gate: p50 ≤1.5s / p95 ≤2.5s turn latency, ≥9/10
 manual calls book correctly, barge-in + silence tests pass, eval pass rate ≥85%.
 
-Nine tasks total (5.1–5.9). **Six done so far: 5.5, 5.1, 5.2, 5.8, 5.3 and 5.4**, following
+Nine tasks total (5.1–5.9). **Seven done so far: 5.5, 5.1, 5.2, 5.8, 5.3, 5.4 and 5.6**, following
 BUILD_PLAN.md's own recommended order (`5.0 → 5.2 → 5.8 → 5.3 → 5.4 → 5.6 → 5.9 → 5.7
 → 5.11 → 5.10`) from 5.2 onward; 5.5 and 5.1 landed earlier, before that order was
 written.
@@ -733,10 +734,63 @@ a monkeypatched `tools.call_tool`) plus one wiring test in
 
 **Final state:** 286 tests passing, `ruff check`/`ruff format` clean.
 
+#### Task 5.6 — Spoken-output normalization — ✅ Done
+
+**Decision asked and answered before building** (the plan's own "Decisions needed" box
+flagged this as the owner's call): spoken numbers use **English forms when the reply
+itself is in English, Hindi/Hinglish forms otherwise** - the plan's own recommendation.
+
+**Goal:** `17:30` → "saade paanch baje", `₹500` → "paanch sau rupaye", phone numbers
+read in pairs - turning the "spoken numbers" prompt rule into code.
+
+**Checked Pipecat's TTS text-filter hook first, as the plan asks, and it fits with no
+new processor at all:** `TTSService`'s `text_filters` is deprecated (removed in 2.0.0);
+its replacement, `text_transforms`, already hands the callback the **aggregated**
+sentence (not a partial streamed chunk - solves the "17:"/"30" split problem for free)
+and - per its own docstring - only changes what reaches the synthesizer, never
+`Agent`'s history or `CallLog`'s transcript. Registered on `SarvamHttpTTSService` in
+`run_bot()` with zero extra pipeline code.
+
+**What got built:** `app/speech.py` (new) - `normalise_for_speech(text, lang)` plus
+`detect_lang(text)` (a narrow heuristic: Devanagari script, or ~45 common
+Hindi/Hinglish marker words reusing `app.timeparse`'s vocabulary, else English).
+Deliberately **no general 0-99 Hindi number-word table** - irregular past the teens,
+and nothing in this domain needs it:
+- **Times:** always a quarter-hour value (`clinic.yaml`'s `slot_minutes: 15`), so only
+  hour words 1-12 are needed via the existing saade/paune/sava/baje idiom (and its
+  English equivalents). Anything off that grid is left unchanged, not guessed at.
+- **Prices:** all 5 real `clinic.yaml` prices (200/500/1500/3000/4000) are round
+  hundreds/thousands, so only ones+teens (1-19) are needed, decomposed as "X sau"/"X
+  hazar" or "X hundred"/"X thousand". Non-round amounts are left unchanged.
+- **Phone numbers:** read **digit-by-digit, grouped in pairs with a comma pause** -
+  not spoken as two-digit numbers. A deliberate reading of "pairs" as pacing, chosen
+  specifically to avoid needing Hindi's irregular 20-99 number words.
+
+**Two real bugs caught before shipping, not hypothetical ones:**
+- The first version duplicated the time marker when a reply wrote both the digits
+  *and* the word together ("10:00 baje" → "das baje baje") - this is a documented,
+  observed LLM slip (Phase 3's close-out note: "a few replies used digits ('10
+  baje'...) despite the rule"), not an invented edge case. Fixed by extending the time
+  regex to consume a redundant leading `sava`/`paune`/`saade` or trailing `baje` into
+  the match and drop it, treating the digits as the source of truth.
+- `detect_lang` initially misclassified "Emergency ho to +91... par call karein" (a
+  real phrase this bot would plausibly say, built from `app/prompts.py`'s own
+  emergency-number line) as English - none of "ho"/"karein"/"to"/"par" were in the
+  first marker-word list. Expanded it with common Hinglish verb forms rather than
+  leave a real phrase silently misclassified.
+
+**Tests:** `tests/unit/test_speech_normalise.py` (41 cases: times/prices/phones in
+both languages, unchanged-text cases, the duplication-regression cases, and
+`detect_lang` itself) plus one small test in `tests/unit/test_voice_bot.py` for the
+thin `_speak_normalised` wiring function.
+
+**Final state:** 328 tests passing, `ruff check`/`ruff format` clean.
+
+**Not done here, deferred to 5.7 as the plan itself says:** removing the now-redundant
+"spoken numbers" rule from `app/prompts.py`.
+
 #### Remaining Phase 5 tasks (not started)
 
-- **5.6 — Spoken-output normalization:** `17:30` → "saade paanch baje", `₹500` →
-  "paanch sau rupaye", phone numbers in digit pairs. Pure, testable function.
 - **5.7 — Shorten + cache the system prompt** to reduce LLM time-to-first-token.
 - **5.9 — `transfer_to_human` takes a message + promises a callback** (a real call
   transfer only comes in Phase 8 with Twilio).

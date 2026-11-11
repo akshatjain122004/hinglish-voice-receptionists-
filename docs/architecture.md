@@ -206,3 +206,31 @@ Design choices and discoveries worth remembering, added as phases progress.
   pattern as `SilenceProcessor.silence_timeout` from 5.3, so tests don't have to wait
   out the real 700ms. The filler phrase itself is a `TTSSpeakFrame`, same primitive as
   5.3's reprompt/goodbye, so it never touches `Agent`'s history either.
+- **5.6: Sarvam TTS's `text_transforms` hook needed no new processor at all.**
+  `TTSService.__init__`'s `text_filters` is deprecated since 1.14.0 (removed in 2.0.0);
+  its replacement, `text_transforms` (`list[(text_type, async (text, text_type) -> text)]`,
+  registered on `SarvamHttpTTSService` in `run_bot()`), already receives the
+  **aggregated** sentence rather than a partial streamed chunk, and - per its own
+  docstring - only changes what reaches the synthesizer, never the context/history. Both
+  of 5.6's hard parts (don't normalise `"17:"` before `"30"` arrives; don't let the
+  normalised form leak into `Agent`'s history or `CallLog`) are solved by Pipecat's own
+  mechanism, not new code.
+  - `app/speech.py`'s `normalise_for_speech`/`detect_lang` deliberately have **no general
+    0-99 Hindi number-word table** - that vocabulary is famously irregular past the teens,
+    and nothing in this domain needs it: times are always on `clinic.yaml`'s 15-minute
+    slot grid (so only hour words 1-12, via the existing saade/paune/sava/baje idiom),
+    prices are all round hundreds/thousands (only ones+teens for the hundreds/thousands
+    digit), and phone numbers are read **digit-by-digit in pairs** (a comma pause between
+    pairs, not two-digit number words) - a deliberate reading of "pairs" as pacing, chosen
+    specifically to avoid that irregular table.
+  - **A real, previously-documented LLM slip almost shipped a duplicate-word bug.** Phase
+    3's close-out note observed replies occasionally writing digits anyway ("10 baje").
+    The first version of the time regex didn't account for a reply writing *both* the
+    digits and the Hindi marker word together, and produced "das baje baje". Fixed by
+    extending the regex to consume a redundant leading `sava`/`paune`/`saade` or trailing
+    `baje` into the match itself (dropped, since the digits are the source of truth),
+    rather than leaving the original word in place next to the newly-spoken one.
+  - `detect_lang` is a narrow heuristic scoped to exactly this one decision (which
+    number-word style to use for a sentence), not general language identification -
+    Devanagari script, or any of ~45 common Hindi/Hinglish marker words (reusing
+    `app.timeparse`'s own vocabulary), else English.

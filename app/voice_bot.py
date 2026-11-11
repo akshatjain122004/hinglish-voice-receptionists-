@@ -60,6 +60,7 @@ from app.agent import FALLBACK_MESSAGE, Agent, SarvamLLMClient
 from app.config import get_settings
 from app.db import CallLog, get_session
 from app.metrics import TurnTracker, ensure_file_sink
+from app.speech import detect_lang, normalise_for_speech
 from app.stt_noise import is_noise
 
 OnToolCall = Callable[[str, dict[str, Any], dict[str, Any]], None]
@@ -492,6 +493,19 @@ def _greeting() -> str:
     return f"Namaste! {clinic['name']} mein aapka swagat hai. Main aapki kya madad kar sakti hoon?"
 
 
+async def _speak_normalised(text: str, text_type: str | Any) -> str:
+    """BUILD_PLAN 5.6: registered as `SarvamHttpTTSService`'s `text_transforms`
+    hook (Pipecat's current, non-deprecated TTS text-rewrite mechanism - see
+    `app/speech.py`'s module docstring for why this needed no custom
+    sentence-buffering processor). Pipecat already hands this the
+    *aggregated* sentence, never a partial streamed chunk, and only what
+    reaches the synthesizer is changed - `Agent`'s history and `CallLog`'s
+    transcript (and the evals, which grade that same original text) never
+    see the rewrite.
+    """
+    return normalise_for_speech(text, detect_lang(text))
+
+
 async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> None:
     """Runs the voice pipeline for one call over an already-built transport.
 
@@ -534,6 +548,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
             api_key=settings.sarvam_api_key,
             aiohttp_session=session,
             settings=SarvamHttpTTSService.Settings(voice="shreya"),
+            text_transforms=[("*", _speak_normalised)],
         )
         vad_analyzer = SileroVADAnalyzer(params=_vad_params())
 

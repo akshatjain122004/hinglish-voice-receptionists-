@@ -930,11 +930,63 @@ pause Y/N) to confirm it's not now *too* long; no unit test can validate that tr
     always finishes well after the short race timeout elapses).
   - Full offline suite: 286 passed, `ruff check`/`ruff format` clean.
 
-- [ ] 5.6 **Spoken output normalisation:** `17:30` → "saade paanch baje", `₹500` → "paanch sau rupaye", and phone numbers read in pairs.
+- [x] 5.6 **Spoken output normalisation:** `17:30` → "saade paanch baje", `₹500` → "paanch sau rupaye", and phone numbers read in pairs.
   - Write a pure function `app/speech.py: normalise_for_speech(text, lang) -> str` with no pipecat imports, in the same style as `app/metrics.py`.
   - **The streaming catch:** since 5.1, the reply arrives in small chunks, so `"17:"` and `"30"` can land in different chunks. Normalise **whole sentences**, after Pipecat's sentence aggregation and before synthesis. Use a TTS text-filter hook if Pipecat 1.15.0 has one (verify); otherwise add a small processor that buffers to a sentence boundary.
   - Voice path only: `CallLog` transcripts and the evals keep the original text.
   - This turns the "spoken numbers" prompt rule into code (`CLAUDE.md` rule 12), which fixes the Phase 3 observation that replies sometimes still said "10 baje" in digits. 5.7 can then delete that rule from the prompt.
+
+  **Decision needed, asked and answered before building:** the plan's own "Decisions needed" box
+  flagged the number-word language choice as the owner's call, not an engineering judgment -
+  confirmed: **English forms when the reply itself is in English, Hindi/Hinglish forms otherwise**
+  (the plan's own recommendation).
+
+  **Checked Pipecat's TTS text-filter hook first, as asked, and it's a clean fit — no custom
+  buffering processor needed.** `TTSService.__init__`'s `text_filters` param is deprecated since
+  1.14.0 (removed in 2.0.0); its replacement, `text_transforms` (`list[(text_type, async (text,
+  text_type) -> text)]`), does exactly what 5.6 needs: it receives the **already-aggregated**
+  sentence (not a partial streamed chunk - solves the "17:"/"30" split for free), and - per its own
+  docstring - "on a TTS service it reaches the synthesizer only, and the context keeps the text as
+  the LLM wrote it," which is precisely "voice path only; `CallLog`/evals keep the original text"
+  with zero extra code. Registered via `SarvamHttpTTSService(..., text_transforms=[("*",
+  _speak_normalised)])` in `run_bot()`.
+  - `app/speech.py` (new): `normalise_for_speech(text, lang)` plus `detect_lang(text)` (a narrow
+    heuristic - Devanagari script, or a ~45-word Hindi/Hinglish marker-word list reusing
+    `app.timeparse`'s own vocabulary, else English; scoped to just this one decision, not general
+    language ID). Deliberately **no general 0-99 Hindi number-word table** - Hindi's two-digit
+    number words (21-99) are irregular enough to need a much larger hand-written list than this
+    domain requires. Scoped to what the data actually needs:
+    - **Times:** always a quarter-hour value (`clinic.yaml`'s `slot_minutes: 15`, and clinic
+      hours/lunch are also on the hour/half-hour), so only hour words 1-12 are needed, reusing the
+      existing saade/paune/sava/baje idiom (and its exact English equivalents - half past/quarter
+      past/quarter to/o'clock). Anything off that grid is left exactly as written, not guessed at.
+    - **Prices:** `clinic.yaml`'s 5 real prices (200/500/1500/3000/4000) are all round hundreds or
+      thousands, so only ones+teens (1-19) are needed for the hundreds/thousands digit, decomposed
+      as "X sau"/"X hazar" (Hindi) or "X hundred"/"X thousand" (English). A non-round amount is left
+      unchanged, same reasoning as times.
+    - **Phone numbers:** read **digit-by-digit**, grouped into pairs with a comma pause between
+      groups - not spoken as two-digit numbers. This is a deliberate reading of "read in pairs" as
+      *pacing* rather than *word choice*, made specifically to avoid needing the irregular 20-99
+      Hindi table; only needs single-digit words (0-9), which are unambiguous.
+  - **A real bug caught and fixed before it shipped, not a hypothetical one:** the first version
+    duplicated the time marker when a reply already wrote both the digits and the word together
+    (e.g. "10:00 baje" → "das baje baje") - this is a *documented, observed* LLM slip, not a made-up
+    edge case (see Phase 3's close-out note: "a few replies used digits ('10 baje'...) despite the
+    rule"). Fixed by extending the time regex to consume a redundant leading
+    `sava`/`paune`/`saade` or trailing `baje` into the match (and drop it - the digits are treated
+    as the source of truth), rather than leaving it in place alongside the newly-spoken form.
+  - **A real `detect_lang` gap found while sanity-checking against a realistic sentence:**
+    "Emergency ho to +91... par call karein" initially came back `"en"` - none of "ho"/"karein"/"to"/
+    "par" were in the first, narrower marker-word list. Expanded the list with common Hinglish verb
+    forms (`ho`, `hoga`, `karein`, `kijiye`, `milega`, `chahiye`, `sakte`, ...) rather than leaving a
+    real clinic-prompt phrase (the emergency number from `app/prompts.py`) silently misclassified.
+  - Tests: `tests/unit/test_speech_normalise.py` (41 cases - times/prices/phones in both languages,
+    unchanged-text cases, the duplication-regression cases, and `detect_lang` itself) plus one small
+    test in `tests/unit/test_voice_bot.py` for the thin `_speak_normalised` glue function (the pure
+    logic is fully covered in `test_speech_normalise.py`; this just checks the wiring).
+  - Full offline suite: 328 passed, `ruff check`/`ruff format` clean.
+  - **Not done here, deferred to 5.7 as the plan itself says:** removing the now-redundant
+    "spoken numbers" rule from `app/prompts.py`.
 
 - [ ] 5.9 **Caller asks for a human:** the `transfer_to_human` tool takes a message and promises a callback (a real transfer comes in Phase 8).
   - Schema: `transfer_to_human(reason, message?)`. Save the request to a new `CallbackRequest(id, phone, name?, message, reason, created_at, status)` table. A brand-new table is created fine by `create_all`; it's new *columns* on existing tables that need the 6.0 migration.

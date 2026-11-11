@@ -1,10 +1,17 @@
 from datetime import UTC, datetime
 
+import pytest
 from sqlmodel import select
 
 from app import booking
 from app import db as db_module
-from app.voice_bot import VAD_STOP_SECS, CallLogger, _vad_params, placeholder_caller_phone
+from app.voice_bot import (
+    VAD_STOP_SECS,
+    CallLogger,
+    _speak_normalised,
+    _vad_params,
+    placeholder_caller_phone,
+)
 
 
 def test_call_logger_start_creates_a_call_log_row(db):
@@ -83,3 +90,17 @@ def test_vad_params_uses_the_tuned_stop_secs():
     VAD_STOP_SECS's docstring and docs/architecture.md's Phase 5 note)."""
     assert _vad_params().stop_secs == VAD_STOP_SECS
     assert VAD_STOP_SECS > 0.6
+
+
+@pytest.mark.asyncio
+async def test_speak_normalised_is_the_tts_text_transform_wired_to_app_speech():
+    """BUILD_PLAN 5.6: registered as SarvamHttpTTSService's text_transforms
+    hook in run_bot() - the pure logic itself lives in and is fully tested
+    by tests/unit/test_speech_normalise.py; this just checks the thin glue
+    function picks the right language and calls through correctly."""
+    assert await _speak_normalised("Kal shaam 17:30 par aa jaiyega.", "*") == (
+        "Kal shaam saade paanch baje par aa jaiyega."
+    )
+    assert (
+        await _speak_normalised("Your slot is at 17:30.", "*") == "Your slot is at half past five."
+    )
