@@ -367,7 +367,8 @@ remaining action item to close Phase 4's gate.
 silence, good at language-mixing. Gate: p50 ≤1.5s / p95 ≤2.5s turn latency, ≥9/10
 manual calls book correctly, barge-in + silence tests pass, eval pass rate ≥85%.
 
-Nine tasks total (5.1–5.9). **Seven done so far: 5.5, 5.1, 5.2, 5.8, 5.3, 5.4 and 5.6**, following
+Nine tasks total (5.1–5.9). **Eight done so far: 5.5, 5.1, 5.2, 5.8, 5.3, 5.4, 5.6 and 5.9**,
+following
 BUILD_PLAN.md's own recommended order (`5.0 → 5.2 → 5.8 → 5.3 → 5.4 → 5.6 → 5.9 → 5.7
 → 5.11 → 5.10`) from 5.2 onward; 5.5 and 5.1 landed earlier, before that order was
 written.
@@ -789,11 +790,59 @@ thin `_speak_normalised` wiring function.
 **Not done here, deferred to 5.7 as the plan itself says:** removing the now-redundant
 "spoken numbers" rule from `app/prompts.py`.
 
+#### Task 5.9 — Caller asks for a human — ✅ Done
+
+**Goal:** `transfer_to_human` takes a message and promises a callback (a real transfer
+only comes in Phase 8 with Twilio).
+
+**Redesigned the tool's contract, not just added a field.** The old `transfer_to_human`
+claimed a real transfer had already happened (`{"transferred": True}`), which was
+never true even before this task — it just returned that without doing anything. Now
+it does what Phase 5 can actually deliver: log a `CallbackRequest` and promise a
+human will call back, with no false claim of an immediate transfer.
+- `app/db.py`: new `CallbackRequest(id, phone, name, message, reason, created_at,
+  status)` table, exactly the plan's own field list. `name` stays `None` from this
+  path — the tool schema never asks the LLM for it.
+- `app/booking.py`: new `clinic_hours()`, same pattern as the existing
+  `service_names()`. `transfer_to_human`'s result carries
+  `callback_hours_open`/`callback_hours_close` so the reply can promise a callback
+  "during clinic hours" without the literal hours ever being written into
+  `app/prompts.py` (non-negotiable rule #1/#12). Since task 5.6 landed first, a
+  reply that echoes those hours verbatim gets spoken correctly for free via the TTS
+  `text_transforms` hook.
+- `phone` is now required, added to `PHONE_INJECTED_TOOLS` (same injection pattern as
+  `book_appointment`); `message` is a new optional field for a short note to staff.
+- `app/prompts.py` extended to say what to tell the caller and that `message` is
+  optional.
+
+**Updated an existing unit test to match the deliberate redesign** (not a bug being
+papered over): `test_acknowledges_the_reason` asserted the old, always-false
+`"transferred": True` claim — replaced with two tests checking the new result shape,
+the actual `CallbackRequest` row, and that `clinic_hours()` is what's echoed back.
+`data/test_calls.yaml`'s two `human_handoff_*` golden cases use `args: {}`, which
+already means "don't check argument values" in `check_tool_calls` — untouched, per
+rule 11.
+
+**An unrelated flaky-test bug found and fixed while verifying this task, not caused
+by it:** `tests/integration/test_barge_in.py`'s two interruption-timing tests (from
+task 5.2) failed under a full-suite run (never alone) — their 20ms pre-interruption
+delay was too short under full-suite CPU contention, letting `AgentProcessor`'s
+turn-start reset wipe out an `InterruptionFrame` that arrived too early. A first
+attempt at raising that delay to 150ms made it *worse* — it then overshot the
+scripted LLM's own 0.05s internal sleep, so the content got forwarded *before* the
+interruption arrived at all, the opposite failure. Fixed by widening both sides of
+the window (LLM sleeps raised to 0.3s, test delays set to 0.1s) rather than nudging
+one number, confirmed with 5 repeated standalone runs plus this task's own
+full-suite run.
+
+**Final state:** 331 tests passing, `ruff check`/`ruff format` clean.
+
+**Not done here, out of scope per this task's own plan notes:** the Phase 9
+dashboard's "Callback requests" page and Phase 6's optional WhatsApp-the-owner hook.
+
 #### Remaining Phase 5 tasks (not started)
 
 - **5.7 — Shorten + cache the system prompt** to reduce LLM time-to-first-token.
-- **5.9 — `transfer_to_human` takes a message + promises a callback** (a real call
-  transfer only comes in Phase 8 with Twilio).
 
 **Phase 5's complete-when gate** (not yet met): p50 ≤1.5s / p95 ≤2.5s turn latency,
 ≥9/10 manual calls book correctly, barge-in + silence tests pass, eval pass rate

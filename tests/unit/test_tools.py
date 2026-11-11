@@ -164,10 +164,31 @@ class TestAnswerFaq:
 
 
 class TestTransferToHuman:
-    def test_acknowledges_the_reason(self, db):
-        result = tools.transfer_to_human(reason="caller wants a human")
+    def test_logs_a_callback_request_and_promises_clinic_hours(self, db):
+        result = tools.transfer_to_human(
+            reason="caller wants a human", phone="9829012345", message="Pain in the tooth"
+        )
         assert result["ok"] is True
-        assert result["transferred"] is True
+        assert result["callback_requested"] is True
+        hours = booking.clinic_hours()
+        assert result["callback_hours_open"] == hours["open"]
+        assert result["callback_hours_close"] == hours["close"]
+
+        with db_module.get_session() as session:
+            requests = session.exec(select(db_module.CallbackRequest)).all()
+        assert len(requests) == 1
+        assert requests[0].phone == "9829012345"
+        assert requests[0].reason == "caller wants a human"
+        assert requests[0].message == "Pain in the tooth"
+        assert requests[0].name is None
+        assert requests[0].status == "pending"
+
+    def test_message_is_optional(self, db):
+        result = tools.transfer_to_human(reason="caller wants a human", phone="9829012345")
+        assert result["ok"] is True
+        with db_module.get_session() as session:
+            requests = session.exec(select(db_module.CallbackRequest)).all()
+        assert requests[0].message is None
 
 
 class TestCallTool:
@@ -272,3 +293,14 @@ class TestCallToolInjectsCallerPhone:
         )
         assert result["ok"] is False
         assert "error" in result
+
+    def test_transfer_to_human_gets_caller_phone_injected(self, db):
+        result = tools.call_tool(
+            "transfer_to_human",
+            {"reason": "caller wants a human"},
+            caller_phone="9829012345",
+        )
+        assert result["ok"] is True
+        with db_module.get_session() as session:
+            requests = session.exec(select(db_module.CallbackRequest)).all()
+        assert requests[0].phone == "9829012345"

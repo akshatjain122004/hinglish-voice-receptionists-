@@ -38,6 +38,21 @@ class UnansweredQuestion(SQLModel, table=True):
     asked_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
+class CallbackRequest(SQLModel, table=True):
+    """A caller asking for a human (BUILD_PLAN 5.9) — a real transfer only
+    comes in Phase 8 (Twilio); until then, this is the promise that a staff
+    member calls back. `name` is nullable: the transfer_to_human tool schema
+    never asks the LLM for it, so it's always None from that path for now."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    phone: str
+    name: str | None = None
+    message: str | None = None
+    reason: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    status: str = "pending"
+
+
 def create_all(target_engine=None) -> None:
     SQLModel.metadata.create_all(target_engine or engine)
 

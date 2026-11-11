@@ -142,6 +142,10 @@ def test_service_names_returns_sorted_clinic_services():
     ]
 
 
+def test_clinic_hours_returns_open_and_close_from_clinic_yaml():
+    assert booking.clinic_hours() == {"open": "10:00", "close": "20:00"}
+
+
 def test_find_by_phone_returns_only_confirmed_upcoming_appointments(db):
     start = _dt(11, 0)
     booking.book("+919829012345", "Ravi", "cleaning", start, now=NOW)

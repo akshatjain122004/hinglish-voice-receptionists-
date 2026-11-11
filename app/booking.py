@@ -64,6 +64,15 @@ def service_names() -> list[str]:
     return sorted(_load_clinic()["services"])
 
 
+def clinic_hours() -> dict[str, str]:
+    """The clinic's open/close times (e.g. `{"open": "10:00", "close":
+    "20:00"}`), for a tool result that needs to state them — CLAUDE.md's
+    "business rules belong in code, never the prompt" rule means a reply
+    promising a callback "during clinic hours" (BUILD_PLAN 5.9) must get the
+    actual hours from here, not a value baked into app/prompts.py."""
+    return _load_clinic()["hours"]
+
+
 def _service_duration(clinic: dict, service: str) -> timedelta:
     if service not in clinic["services"]:
         raise InvalidBookingError(f"unknown service: {service}")

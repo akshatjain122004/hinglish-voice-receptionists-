@@ -13,7 +13,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ValidationError
 
-from app import booking, rag, timeparse
+from app import booking, db, rag, timeparse
 
 # Tuned against real scores from the multilingual embedder (see
 # tests/integration/test_rag_retrieval.py, re-measured after app.rag.ingest
@@ -56,6 +56,8 @@ class AnswerFaqInput(BaseModel):
 
 class TransferToHumanInput(BaseModel):
     reason: str
+    phone: str
+    message: str | None = None
 
 
 def _error(exc: Exception) -> dict:
@@ -159,12 +161,27 @@ def answer_faq(*, question: str, phone: str | None = None) -> dict:
     return {"ok": True, "found": True, "answer": results[0]["answer"]}
 
 
-def transfer_to_human(*, reason: str) -> dict:
+def transfer_to_human(*, reason: str, phone: str, message: str | None = None) -> dict:
+    """Logs a `CallbackRequest` and promises a callback during clinic hours.
+
+    `phone` comes from `call_tool`'s `PHONE_INJECTED_TOOLS`, never the LLM
+    (same pattern as `book_appointment`). A real transfer only comes in
+    Phase 8 (Twilio); for now this always succeeds — there's no failure mode
+    to log a callback request."""
     try:
-        args = TransferToHumanInput(reason=reason)
+        args = TransferToHumanInput(reason=reason, phone=phone, message=message)
     except ValidationError as exc:
         return _error(exc)
-    return {"ok": True, "transferred": True, "reason": args.reason}
+    with db.get_session() as session:
+        session.add(db.CallbackRequest(phone=args.phone, message=args.message, reason=args.reason))
+        session.commit()
+    hours = booking.clinic_hours()
+    return {
+        "ok": True,
+        "callback_requested": True,
+        "callback_hours_open": hours["open"],
+        "callback_hours_close": hours["close"],
+    }
 
 
 REGISTRY: dict[str, Callable[..., dict]] = {
@@ -185,6 +202,7 @@ PHONE_INJECTED_TOOLS = {
     "cancel_appointment",
     "reschedule_appointment",
     "answer_faq",
+    "transfer_to_human",
 }
 
 
@@ -300,10 +318,22 @@ TOOL_SCHEMAS: list[dict] = [
         "type": "function",
         "function": {
             "name": "transfer_to_human",
-            "description": "Hand the call over to clinic staff when the bot can't help.",
+            "description": (
+                "Ask clinic staff to call the caller back, since a real transfer isn't "
+                "available yet. Phone is already known from the call; never ask for it."
+            ),
             "parameters": {
                 "type": "object",
-                "properties": {"reason": {"type": "string"}},
+                "properties": {
+                    "reason": {
+                        "type": "string",
+                        "description": "Why the caller needs a human, e.g. 'wants to speak to a person'.",
+                    },
+                    "message": {
+                        "type": "string",
+                        "description": "A short note for staff on what the caller needs, if they gave one.",
+                    },
+                },
                 "required": ["reason"],
             },
         },

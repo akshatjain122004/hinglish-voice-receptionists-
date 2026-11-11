@@ -47,7 +47,7 @@ If answer_faq returns found: false, the FAQs don't cover that question — say "
 
 Never give medical advice. For pain or emergencies, give the clinic's emergency number: {emergency_phone}.
 
-If the request is off-topic, politely redirect back to appointments and clinic questions. If the caller asks for a human, use transfer_to_human."""
+If the request is off-topic, politely redirect back to appointments and clinic questions. If the caller asks for a human, call transfer_to_human with a brief reason (and a short message summarising what they need, if they said). Tell them a staff member will call back during the hours the tool result gives you (callback_hours_open/callback_hours_close) — never state clinic hours yourself."""
 
 
 SYSTEM_PROMPT = build_system_prompt()

@@ -83,7 +83,13 @@ class _SlowSecondRoundLLM:
                 ]
             )
             return
-        await asyncio.sleep(0.05)
+        # 0.3s, not the 0.05s this originally used: the test's own delay
+        # before sending the InterruptionFrame needs real margin to survive a
+        # loaded full-suite run (see that delay's own comment), and if this
+        # sleep is too close to that margin, round 2's content can finish and
+        # get forwarded *before* the InterruptionFrame even arrives - the
+        # opposite failure from the one that margin exists to prevent.
+        await asyncio.sleep(0.3)
         yield ChatDelta(content="Aapki cleaning confirm ho gayi, Ravi.")
 
 
@@ -106,11 +112,16 @@ async def test_caller_interrupts_mid_turn_does_not_lose_the_booking(db):
             ),
             # Give AgentProcessor time to start the turn (resetting
             # `_interrupted`), run round 1 (the tool call) and reach round 2's
-            # real `asyncio.sleep` in `_SlowSecondRoundLLM`, so this
+            # real `asyncio.sleep(0.3)` in `_SlowSecondRoundLLM`, so this
             # InterruptionFrame genuinely lands *mid-turn* rather than being
             # processed - and immediately reset away - before the turn even
-            # starts.
-            SleepFrame(sleep=0.02),
+            # starts (too-short margin), or arriving after round 2's content
+            # already went out (too-long margin, overshooting that 0.3s).
+            # 0.1s sits well inside that window even under a loaded
+            # full-suite run - an earlier 20ms was too short under load, and
+            # a since-corrected 150ms test of this fix accidentally overshot
+            # an unraised 0.05s sleep instead of being the problem itself.
+            SleepFrame(sleep=0.1),
             InterruptionFrame(),
         ],
     )
@@ -152,7 +163,9 @@ class _InterruptThenReplyLLM:
     ) -> AsyncIterator[ChatDelta]:
         self.calls += 1
         if self.calls == 1:
-            await asyncio.sleep(0.05)
+            # 0.3s - see the matching note on the test's own pre-interruption
+            # delay below for why this needs real margin either way.
+            await asyncio.sleep(0.3)
             yield ChatDelta(content="purani baat jo suni nahi jaani chahiye")
         else:
             yield ChatDelta(content="Namaste! Kaise madad kar sakti hoon?")
@@ -168,7 +181,19 @@ async def test_next_turn_after_an_interruption_starts_clean():
             TranscriptionFrame(
                 text="kal slot hai?", user_id="caller", timestamp="2026-11-09T10:00:00Z"
             ),
-            SleepFrame(sleep=0.02),
+            # Must be comfortably longer than it takes AgentProcessor's
+            # process task to actually get scheduled and start handle_turn()
+            # (reaching the LLM's 0.3s internal sleep above) - under a loaded
+            # full-suite run this can take longer than a few ms, and if the
+            # InterruptionFrame lands first, AgentProcessor's own turn-start
+            # reset (`self._interrupted = False`) wipes out an interruption
+            # that arrived too early (the same race documented for
+            # tests/integration/test_silence.py's LET_CONTROL_FRAMES_DRAIN).
+            # Also must stay comfortably *under* the 0.3s sleep above, or the
+            # content is forwarded before the InterruptionFrame even arrives
+            # - the opposite failure, hit when this was first (wrongly)
+            # raised to 150ms without also raising that sleep.
+            SleepFrame(sleep=0.1),
             InterruptionFrame(),
         ],
     )
