@@ -658,10 +658,10 @@ plan where doing it costs the least extra effort.
 | # | Item | From | Who can do it | Cost | Where it's now scheduled |
 |---|---|---|---|---|---|
 | C1 | Sarvam TTS hello-world smoke test | Phase 0 | anyone | ~₹0.1 | **Propose closing it as done by evidence:** Phase 4 made 5 real voice bookings with live Sarvam TTS, which proves more than a hello-world call would. Needs your OK. |
-| C2 | `chat_cli.py` manual checks: book / cancel / reschedule in Hindi, English, Hinglish, plus the "5:15 book kar do" trick | Phase 2 | you | ~₹2 | Task 5.10 (same sitting as the eval-debt pass) |
+| C2 | `chat_cli.py` manual checks: book / cancel / reschedule in Hindi, English, Hinglish, plus the "5:15 book kar do" trick | Phase 2 | you | ~₹2 | **Still open** — needs you, interactively; not done during 5.10 |
 | C3 | 10 real `.wav` recordings for `tests/evals/test_stt_samples.py` (≥ 8/10 gate) | Phase 4 | **a human voice** | ~₹1 | Phase 5 manual checks: the same 3 people making the 10 test calls each record 3–4 sentences |
-| C4 | Eval pass rate stuck at 56% (Phase 2) / 73% (Phase 3), gate is ≥ 85% | Phases 2–3 | you + Claude | ~₹5–10 | Task 5.10, before Phase 5's gate |
-| C5 | Eval "reply language matches caller language" checker was never built | Phase 2 | Claude | ₹0 | Task 5.10 |
+| C4 | Eval pass rate stuck at 56% (Phase 2) / 73% (Phase 3), gate is ≥ 85% | Phases 2–3 | you + Claude | ~₹5–10 | **Resolved** — 86% as of the 4th live run during 5.10, see 5.10's notes |
+| C5 | Eval "reply language matches caller language" checker was never built | Phase 2 | Claude | ₹0 | **Resolved** — `check_language_match` built during 5.10a |
 | C6 | CI may have been red on `main` (the `db`-fixture bug found during 5.1) | Phase 4 | Claude | ₹0 | Task 5.0 |
 | C7 | Offline suite ~26–27 s against a 30 s budget | Phase 3 | Claude | ₹0 | Task 5.0 |
 
@@ -1198,6 +1198,21 @@ pause Y/N) to confirm it's not now *too* long; no unit test can validate that tr
   - d. Do the Phase 2 `chat_cli.py` manual checks (C2) in the same sitting.
   - e. **At most 2 live eval runs** → `reports/evals_phase5.md`.
 
+  **a, b done as proposed.** `check_language_match` (`app/evals.py`, reusing `app.speech.detect_lang`) and `check_slots`'s new `suggested`/`total` fields (`app/tools.py`, spread across the window, capped at 3) — both covered by unit tests (`TestCheckLanguageMatch`, `TestSuggestedSlots`).
+
+  **c, your decisions, each applied:**
+  - `booking_005` — removed `part_of_day: morning` from the *first* `check_slots` call's expected args (the caller hadn't said "subah" yet at that point).
+  - `faq_002`/`faq_005` — loosened the free-text arg matcher to a word-form-aware ≥ 60% overlap (fixed `faq_002` outright); `faq_005` still failed (the model's paraphrase was a full sentence sharing almost no words with the short expected phrase), so its `question` arg check was dropped entirely, keeping `must_not_hallucinate`.
+  - `unclear_001` — narrowed `must_mention` from `["booking", "appointment"]` (AND) to `["appointment"]`.
+  - `faq_010` — first `must_mention: ["BDS"] → ["dentist"]`; still failed on wording variance on a later run, so `must_mention` was dropped entirely for this case too.
+
+  **e, 4 live runs, not 2** (your call each time, after reviewing results) — pass rate **63% → 66% → 71% → 86%** (`reports/evals_phase5.md`). Two real agent bugs found and fixed along the way (prompt-only, no test expectations touched):
+  - *5.7 regression:* "open with a short acknowledgment" was being read as a 3rd sentence on top of the 2-sentence budget. Reworded so the budget explicitly includes the acknowledgment. Fixed `booking_004`, `code_switch_001`, `code_switch_004`.
+  - *English→Hinglish bleed:* root cause was two prompt lines giving a literal Hinglish phrase as "the thing to say" for a failed tool call / FAQ-not-found, copied verbatim regardless of caller language. Reworded both as an example of the idea with an English equivalent alongside, plus a stronger explicit language rule. Fixed `no_slot_002`, `reschedule_002`, `cancel_002`.
+  - Remaining failures across the final run — `booking_002`/`code_switch_005` (`ReadTimeout`, network), `faq_out_of_scope_001`/`reschedule_002`/`code_switch_003` (LLM run-to-run variance — manually re-run individually and did not reproduce) — not chased further to avoid spending more live-API budget on noise.
+
+  **d not done.** The Phase 2 `chat_cli.py` manual checks (book/cancel/reschedule in Hindi/English/Hinglish, the "5:15 trick") need you, interactively, in your own terminal.
+
 - [ ] 5.12 **(Only if needed) Switch TTS to Sarvam's WebSocket streaming service** *(new, conditional)*.
   - Do this only if the post-manual-check latency report shows `tts_latency_ms` is what keeps p50 above target. Phase 4's TTS p50 alone was 1366 ms against a 1.5 s total budget. That's the honest reason this swap might come back, not barge-in.
   - Rough budget, to show why: VAD stop (0.7 s, invisible) + STT (~0.16 s) + LLM TTFT + first-sentence TTS (~1.0–1.4 s on HTTP). Even with a fast TTFT, the caller-perceived p50 is likely around 2.3 s or more, unless TTS gets faster.
@@ -1210,8 +1225,8 @@ pause Y/N) to confirm it's not now *too* long; no unit test can validate that tr
 - [ ] `tests/integration/test_silence.py`: with injected short timeouts or a fake clock, a reprompt happens at 5 s and the call ends after the second silence; the timer doesn't fire while the bot is speaking or a slow tool is running; caller speech resets it.
 - [ ] `tests/integration/test_filler.py`: a slow fake tool (1 s) produces a filler phrase before the answer; a fast one (100 ms) produces none; two slow rounds still give only one filler.
 - [ ] `tests/unit/test_speech_normalise.py`: at least 20 cases covering times, prices, dates and phone numbers, including text with no numbers (unchanged), already-spoken text (unchanged), and both language modes.
-- [ ] `tests/unit/test_tools.py`: `transfer_to_human` saves a `CallbackRequest`; `check_slots` returns `suggested` (≤ 3, all inside `slots`) and `total`.
-- [ ] Evals: 5 new code-switching cases (5.11) plus the language-match checker (5.10a).
+- [x] `tests/unit/test_tools.py`: `transfer_to_human` saves a `CallbackRequest`; `check_slots` returns `suggested` (≤ 3, all inside `slots`) and `total`.
+- [x] Evals: 5 new code-switching cases (5.11) plus the language-match checker (5.10a).
 
 ### Manual checks
 - [ ] 10 voice calls with **3 different people** (different accents). Record each one in a table:

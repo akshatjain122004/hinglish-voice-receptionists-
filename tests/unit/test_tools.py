@@ -41,6 +41,42 @@ class TestCheckSlots:
         assert result["ok"] is False
         assert "error" in result
 
+    def test_suggested_is_at_most_3_and_total_matches_slots(self, db):
+        """BUILD_PLAN 5.10b: the prompt tells the LLM to read out only
+        `suggested`, so a reply doesn't run past the 2-sentence limit
+        listing every free slot. `slots` keeps the full list (the
+        no-hallucination eval check relies on it)."""
+        result = tools.check_slots(date="kal", service="cleaning", now=NOW)
+        assert result["ok"] is True
+        assert len(result["suggested"]) <= 3
+        assert result["total"] == len(result["slots"])
+        assert set(result["suggested"]) <= set(result["slots"])
+
+    def test_suggested_equals_slots_when_3_or_fewer(self, db):
+        result = tools.check_slots(date="kal", service="cleaning", part_of_day="night", now=NOW)
+        assert result["suggested"] == result["slots"]
+        assert len(result["slots"]) <= 3
+
+
+class TestSuggestedSlots:
+    def test_returns_every_slot_when_at_or_under_the_limit(self):
+        slots = [datetime(2026, 11, 10, h, 0, tzinfo=IST) for h in (10, 11, 12)]
+        assert tools._suggested_slots(slots) == slots
+
+    def test_spreads_across_the_full_window_not_just_the_first_three(self):
+        slots = [datetime(2026, 11, 10, h, 0, tzinfo=IST) for h in range(10, 20)]  # 10 slots
+
+        suggested = tools._suggested_slots(slots)
+
+        assert len(suggested) == 3
+        assert suggested[0] == slots[0]
+        assert suggested[-1] == slots[-1]
+        # The middle pick is genuinely in the middle, not bunched near the start.
+        assert slots.index(suggested[1]) >= 3
+
+    def test_empty_slots_returns_empty(self):
+        assert tools._suggested_slots([]) == []
+
 
 class TestBookAppointment:
     def test_books_a_free_slot(self, db):

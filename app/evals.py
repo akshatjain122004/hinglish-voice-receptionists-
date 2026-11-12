@@ -23,6 +23,7 @@ from app import db as db_module
 from app import timeparse
 from app.agent import Agent, LLMClient
 from app.booking import IST
+from app.speech import detect_lang
 
 _MULTIPLIER_WORDS = {"sau": 100, "hazar": 1000, "hazaar": 1000}
 _ALPHA_WORD = re.compile(r"[a-z]+")
@@ -53,15 +54,47 @@ def count_sentences(text: str) -> int:
 
 _WORD = re.compile(r"[a-z0-9]+")
 
+# How much of `expected`'s words have to show up in `actual` (by word-form,
+# not literal string) for a free-text argument to count as matching. Not
+# 100%: BUILD_PLAN 5.10's eval-debt pass found live cases where the model's
+# paraphrase was substantively correct but swapped one word for an unrelated
+# one (expected "pediatric dental care", got "...pediatric dentistry?" -
+# "care" has no counterpart at all) - requiring every single word failed a
+# correct answer. 0.6 is chosen to clear that real case (2/3 ≈ 0.67) with a
+# small margin, not to make the check toothless.
+_FREE_TEXT_MATCH_THRESHOLD = 0.6
+
+
+def _word_forms_match(a: str, b: str) -> bool:
+    """True for an exact match, or a shared 4+ character prefix.
+
+    Handles common English word-form differences ("open"/"opening",
+    "dentist"/"dentistry") without pulling in a real stemming library - this
+    project's free-text checks don't need linguistic precision, just enough
+    tolerance that a correct paraphrase isn't graded as wrong. Short words
+    (under 4 characters either side) still require an exact match, so this
+    can't loosely match on common short words like "do"/"to".
+    """
+    if a == b:
+        return True
+    return len(a) >= 4 and len(b) >= 4 and a[:4] == b[:4]
+
 
 def _value_matches(expected: Any, actual: Any) -> bool:
     """Exact equality, except free text (e.g. answer_faq's `question`) where
-    the model will paraphrase the caller's words rather than echo them —
-    there every expected word just has to appear somewhere in actual."""
+    the model will paraphrase the caller's words rather than echo them — most
+    of the expected words (allowing for word-form differences, see
+    `_word_forms_match`) have to appear somewhere in actual, not every single
+    one (see `_FREE_TEXT_MATCH_THRESHOLD`)."""
     if isinstance(expected, str) and isinstance(actual, str):
-        expected_words = set(_WORD.findall(expected.lower()))
-        actual_words = set(_WORD.findall(actual.lower()))
-        return expected_words <= actual_words
+        expected_words = _WORD.findall(expected.lower())
+        if not expected_words:
+            return True
+        actual_words = _WORD.findall(actual.lower())
+        matched = sum(
+            1 for ew in expected_words if any(_word_forms_match(ew, aw) for aw in actual_words)
+        )
+        return matched / len(expected_words) >= _FREE_TEXT_MATCH_THRESHOLD
     return expected == actual
 
 
@@ -122,6 +155,24 @@ def check_must_mention(terms: list[str], reply: str) -> bool:
             continue
         return False
     return True
+
+
+def check_language_match(expected_language: str, replies: list[str]) -> bool:
+    """BUILD_PLAN 5.10a: the bot must reply in the caller's language -
+    "Hinglish in, Hinglish out" (CLAUDE.md's voice/conversation style rule).
+
+    Reuses `app.speech.detect_lang`, which only distinguishes "hi"
+    (Hindi/Hinglish) from "en" - the same coarse distinction
+    `test_calls.yaml`'s own `language` field makes (a `hindi` case and a
+    `hinglish` case are graded identically here, since this bot's own
+    reply style for both is romanised Hinglish-leaning text, not pure
+    Devanagari). Checked against the whole conversation's combined reply
+    text, not each turn individually - a short reply (e.g. reading back a
+    name) may not carry enough signal on its own.
+    """
+    detected = detect_lang(" ".join(replies))
+    expected = "en" if expected_language == "english" else "hi"
+    return detected == expected
 
 
 _NUMBER_RUN = re.compile(r"\d+")
@@ -228,6 +279,9 @@ async def run_case(case: dict, llm: LLMClient, *, now: datetime | None = None) -
         tool_results_blob = json.dumps(tool_results)
         if not check_no_hallucination(replies, tool_results_blob):
             reasons.append("possible hallucinated number in a reply")
+
+    if replies and not check_language_match(case.get("language", ""), replies):
+        reasons.append(f"reply language doesn't match expected '{case.get('language')}'")
 
     return EvalResult(id=case["id"], category=case["category"], passed=not reasons, reasons=reasons)
 

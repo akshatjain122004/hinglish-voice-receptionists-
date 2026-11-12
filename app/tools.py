@@ -76,6 +76,20 @@ def _appointment_dict(appointment: booking.db.Appointment) -> dict:
     }
 
 
+_SUGGESTED_SLOTS_LIMIT = 3
+
+
+def _suggested_slots(slots: list[datetime], limit: int = _SUGGESTED_SLOTS_LIMIT) -> list[datetime]:
+    """Up to `limit` slots, evenly spread across `slots` rather than just
+    the first few (BUILD_PLAN 5.10b) - so a reply offering these covers the
+    available window, not three slots bunched at the start of the day."""
+    if len(slots) <= limit:
+        return slots
+    step = (len(slots) - 1) / (limit - 1)
+    indices = sorted({round(i * step) for i in range(limit)})
+    return [slots[i] for i in indices]
+
+
 def check_slots(
     *,
     date: str,
@@ -90,7 +104,18 @@ def check_slots(
         slots = booking.get_free_slots(day, args.service, args.part_of_day)
     except (ValidationError, timeparse.TimeParseError, booking.InvalidBookingError) as exc:
         return _error(exc)
-    return {"ok": True, "slots": [slot.isoformat() for slot in slots]}
+    return {
+        "ok": True,
+        # `slots` stays the full list (the no-hallucination eval check and
+        # must_not_hallucinate rely on every real slot being present here);
+        # `suggested`/`total` are what the prompt tells the LLM to actually
+        # read aloud, so a reply doesn't run past the 2-sentence limit
+        # listing 8 slots (BUILD_PLAN 5.10b, found live during 5.10's
+        # eval-debt pass - code_switch_001's failure was exactly this).
+        "slots": [slot.isoformat() for slot in slots],
+        "suggested": [slot.isoformat() for slot in _suggested_slots(slots)],
+        "total": len(slots),
+    }
 
 
 def book_appointment(

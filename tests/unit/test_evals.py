@@ -4,6 +4,7 @@ from app import booking
 from app.evals import (
     EVAL_NOW,
     EvalResult,
+    check_language_match,
     check_must_mention,
     check_no_hallucination,
     check_tool_calls,
@@ -87,6 +88,33 @@ class TestCheckToolCalls:
         actual = [{"tool": "answer_faq", "args": {"question": "Cleaning ki fees kitni hai?"}}]
         assert check_tool_calls(expected, actual) is True
 
+    def test_free_text_arg_tolerates_a_word_form_difference(self):
+        """BUILD_PLAN 5.10's eval-debt pass (faq_002): a real live run had the
+        model paraphrase "clinic opening time" as "What time does the clinic
+        open?" - "opening" vs "open" is the same word, not a mismatch."""
+        expected = [{"tool": "answer_faq", "args": {"question": "clinic opening time"}}]
+        actual = [{"tool": "answer_faq", "args": {"question": "What time does the clinic open?"}}]
+        assert check_tool_calls(expected, actual) is True
+
+    def test_free_text_arg_passes_on_majority_overlap_not_every_word(self):
+        """BUILD_PLAN 5.10's eval-debt pass (faq_005): a real live run had the
+        model paraphrase "pediatric dental care" as "...pediatric dentistry?"
+        - "care" has no counterpart at all, but 2 of 3 words (allowing for
+        dental/dentistry's word-form difference) is still a correct answer."""
+        expected = [{"tool": "answer_faq", "args": {"question": "pediatric dental care"}}]
+        actual = [
+            {
+                "tool": "answer_faq",
+                "args": {"question": "Do you treat children? Pediatric dentistry?"},
+            }
+        ]
+        assert check_tool_calls(expected, actual) is True
+
+    def test_free_text_arg_still_fails_below_the_majority_threshold(self):
+        expected = [{"tool": "answer_faq", "args": {"question": "parking garage facility"}}]
+        actual = [{"tool": "answer_faq", "args": {"question": "What time do you open?"}}]
+        assert check_tool_calls(expected, actual) is False
+
     def test_ordered_sequence_across_multiple_calls(self):
         expected = [
             {"tool": "check_slots", "args": {"service": "cleaning"}},
@@ -142,6 +170,34 @@ class TestCheckMustMention:
 
     def test_wrong_spoken_number_still_fails(self):
         assert check_must_mention(["500"], "Cleaning ki fees teen sau rupaye hai.") is False
+
+
+class TestCheckLanguageMatch:
+    """BUILD_PLAN 5.10a: the missing reply-language-matches-caller-language
+    checker (C5), built on top of app.speech.detect_lang (5.6)."""
+
+    def test_english_case_with_english_reply_passes(self):
+        assert check_language_match("english", ["Your appointment is confirmed for tomorrow."])
+
+    def test_english_case_with_hinglish_reply_fails(self):
+        assert not check_language_match("english", ["Theek hai, aapka slot confirm ho gaya."])
+
+    def test_hinglish_case_with_hinglish_reply_passes(self):
+        assert check_language_match("hinglish", ["Kal saade paanch baje free hai."])
+
+    def test_hindi_case_with_hinglish_reply_passes(self):
+        """A `hindi`-labelled case is graded the same as `hinglish` - this
+        bot's own reply style for both is romanised, not pure Devanagari."""
+        assert check_language_match("hindi", ["Haan, aapka naam Suresh confirm kar diya."])
+
+    def test_hinglish_case_with_pure_english_reply_fails(self):
+        assert not check_language_match("hinglish", ["Your appointment is confirmed."])
+
+    def test_checks_the_whole_conversation_not_each_turn_alone(self):
+        """A short reply (e.g. reading back just a name) may carry no
+        language signal on its own - the combined text across all turns is
+        what gets checked."""
+        assert check_language_match("hinglish", ["Ravi.", "Haan, theek hai, confirm kar diya."])
 
 
 class TestCheckNoHallucination:
