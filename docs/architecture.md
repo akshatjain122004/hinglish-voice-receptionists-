@@ -83,6 +83,14 @@ Design choices and discoveries worth remembering, added as phases progress.
   - `start_secs`/`confidence`/`min_volume` were left at Pipecat's defaults — no evidence from the
     Phase 4 test pointed at them, so changing them without a reproduced problem would just be
     guessing.
+  - **Decision (2026-11-13), from Phase 5's manual check: `VAD_STOP_SECS` stays at 0.7s.** The
+    10-call table's "awkward pause" column was *not* usable signal for this specific question —
+    every pause reported traced back to Sarvam API latency (STT/LLM, 10-70+ second spikes on
+    several calls, `reports/latency_phase5.md`), not to VAD cutting the caller off mid-sentence or
+    being slow to start listening, which is the one thing this value controls. No call reported
+    being cut off, and no call suggested 0.7s itself felt too long. Keeping the value rather than
+    guessing at a change the data doesn't support; revisit only if a future test actually surfaces
+    a VAD-attributable cutoff.
 - **5.1: LLM streaming + sentence-by-sentence TTS, no custom sentence-splitter needed.**
   `app/llm_streaming.py` holds the only genuinely new logic — merging Sarvam's
   fragmented streaming tool-call deltas (id/name once, `arguments` as many small

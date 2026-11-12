@@ -565,9 +565,11 @@ transliterates the spoken English day name phonetically ("मंडे", "सं
 word — fixed to match what's actually produced.
 
 **Real finding, left as a genuine fail, not papered over:** `sample_07` expected "baarah"/12 but
-the recording transcribes as "ग्यारह बजे" (11) — the sentence read "baarah baje." Unclear from
-text alone whether the person misread the sentence or Sarvam misheard 12-for-11; needs a listen,
-not a manifest edit.
+the recording transcribes as "ग्यारह बजे" (11) — the sentence read "baarah baje." **Confirmed by
+the person who recorded it: they said "gyarah" (11) by mistake, not a Sarvam STT error.** Left
+as a real fail in `reports/stt_samples.md` rather than fixed via a re-recording or a manifest
+edit — 9/10 already clears the ≥8/10 gate, and the manifest entities should keep reflecting what
+each file actually contains.
 
 **4.7:** `app/metrics.py` is deliberately pipecat-agnostic — `TurnTimer` (4
 optional epoch-second timestamps), `durations_ms()` (pure, the thing
@@ -1276,11 +1278,41 @@ pause Y/N) to confirm it's not now *too* long; no unit test can validate that tr
   - **Call 7: booking succeeded but was never verbally confirmed** before the bot moved to an unrelated question — not yet investigated further.
 
 - [x] **Same session:** each of the 3 people records 3–4 of the 10 sentences in `tests/fixtures/audio/manifest.yaml`. Then run `pytest -m live tests/evals/test_stt_samples.py`. This closes Phase 4's last gap (C3). **Done 2026-11-13 — 9/10 passed** (see Phase 4's automated-tests note for the manifest fix this needed and `sample_07`'s unresolved real finding).
-- [ ] Use the "awkward pause" column to decide the final `VAD_STOP_SECS` (keep 0.7, or try 0.5/0.6), and record the decision in `docs/architecture.md`.
-- [ ] Run `scripts/latency_report.py` and save the result to `reports/latency_phase5.md`, with both the comparable and the perceived columns and a side-by-side against the Phase 4 table.
+- [x] Use the "awkward pause" column to decide the final `VAD_STOP_SECS` (keep 0.7, or try 0.5/0.6), and record the decision in `docs/architecture.md`. **Decision: kept at 0.7s** — every awkward pause tonight traced to Sarvam API latency, not VAD cutoff; no evidence to change it. See `docs/architecture.md`'s Phase 5 / 5.5 note.
+- [x] Run `scripts/latency_report.py` and save the result to `reports/latency_phase5.md`, with both the comparable and the perceived columns and a side-by-side against the Phase 4 table.
+
+  **Scoped to tonight's 10 manual calls specifically** (filtered `reports/voice_turns.jsonl` by
+  `session_id`), not the full log — that file also holds Phase 4's original Nov 9 session, and
+  blending the two would corrupt the comparison this is meant to make.
+
+  | stage | Phase 4 p50 | Phase 4 p95 | Phase 5 p50 | Phase 5 p95 |
+  |---|---|---|---|---|
+  | stt_latency_ms | 162 | 4825 | 102 | **25411** |
+  | llm_latency_ms | 2587 | 5620 | 2418 | **18455** |
+  | tts_latency_ms | 1366 | 1836 | 1304 | 3106 |
+  | total_latency_ms | 3192 | 9267 | 3711 | **33448** |
+  | perceived_total_ms | — | — | 4411 | 34148 |
+
+  **p50 is flat or slightly better across every stage** — consistent with 5.1's streaming and
+  5.7's shorter prompt actually working on the common case. **p95 is dramatically worse**, but not
+  from a Phase 5 regression: it's fully explained by the same severe Sarvam API flakiness already
+  documented in the 10-call table's notes (3 separate 60-70s single-turn stalls, several more
+  10-30s spikes, spread across the whole session). This also means **task 5.12's premise doesn't
+  hold** — it proposed swapping to WebSocket TTS *if* TTS latency was the bottleneck, but tonight's
+  TTS numbers are fine (1.3s p50, 3.1s p95); the real tail cost is STT/LLM reliability, which a TTS
+  swap wouldn't touch at all. Flagging 5.12 for a decision rather than running it on the wrong
+  assumption.
 
 ### ✅ Phase complete when
 - **p50 turn latency ≤ 1.5 s** and **p95 ≤ 2.5 s**, measured per turn (first clip only) from VAD's speech-end frame to first audio, as in Phase 4. Caller-perceived latency is reported alongside it. If 1.5 s can't be reached even after 5.7 and 5.12, revisit the target with real numbers rather than quietly moving on;
+
+  **Not met.** p50 3711ms / p95 33448ms (`reports/latency_phase5.md`, tonight's 10 calls) — p50
+  is 2.5x the 1.5s target, p95 over 13x the 2.5s target. Per this gate's own text ("revisit the
+  target with real numbers rather than quietly moving on"): the p95 blowup is a measurement-night
+  artifact of Sarvam API flakiness, not a Phase 5 regression (p50 actually held steady or improved
+  — see the side-by-side above), so re-running this report on a calmer night before deciding
+  whether the 1.5s/2.5s target itself needs revising would be more informative than tuning code
+  against tonight's specific outlier spikes.
 - ≥ 9 of 10 manual calls end in a correct booking;
 - barge-in, silence, filler, noise and normalisation tests pass;
 - the overall eval pass rate is ≥ 85% (or an explicit, written decision to accept a lower number, with the reason);
