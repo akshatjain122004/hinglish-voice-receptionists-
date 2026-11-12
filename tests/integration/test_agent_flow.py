@@ -289,7 +289,7 @@ async def test_on_reply_chunk_is_suppressed_once_a_tool_call_delta_is_seen(db):
 
 
 @pytest.mark.asyncio
-async def test_on_usage_fires_with_the_final_rounds_usage():
+async def test_on_usage_fires_with_the_final_rounds_usage(db):
     """BUILD_PLAN 5.7a: each round's stream_chat() ends with its own usage
     chunk (merged here as a plain ChatDelta - see test_sarvam_llm_client.py
     for the real parsing); a turn with more than one round should report the
