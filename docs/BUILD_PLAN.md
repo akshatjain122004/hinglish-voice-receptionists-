@@ -679,13 +679,13 @@ plan where doing it costs the least extra effort.
 
 | # | Item | From | Who can do it | Cost | Where it's now scheduled |
 |---|---|---|---|---|---|
-| C1 | Sarvam TTS hello-world smoke test | Phase 0 | anyone | ~₹0.1 | **Propose closing it as done by evidence:** Phase 4 made 5 real voice bookings with live Sarvam TTS, which proves more than a hello-world call would. Needs your OK. |
+| C1 | Sarvam TTS hello-world smoke test | Phase 0 | anyone | ~₹0.1 | **Resolved** — closed by evidence per your OK (2026-11-13): Phase 4's 5 real voice bookings with live Sarvam TTS prove more than a hello-world call would |
 | C2 | `chat_cli.py` manual checks: book / cancel / reschedule in Hindi, English, Hinglish, plus the "5:15 book kar do" trick | Phase 2 | you | ~₹2 | **Resolved** — done 2026-11-12 during 5.10d, see Phase 2's manual-checks notes |
 | C3 | 10 real `.wav` recordings for `tests/evals/test_stt_samples.py` (≥ 8/10 gate) | Phase 4 | **a human voice** | ~₹1 | **Resolved** — done 2026-11-13, 9/10, see Phase 4's automated-tests note |
 | C4 | Eval pass rate stuck at 56% (Phase 2) / 73% (Phase 3), gate is ≥ 85% | Phases 2–3 | you + Claude | ~₹5–10 | **Resolved** — 86% as of the 4th live run during 5.10, see 5.10's notes |
 | C5 | Eval "reply language matches caller language" checker was never built | Phase 2 | Claude | ₹0 | **Resolved** — `check_language_match` built during 5.10a |
-| C6 | CI may have been red on `main` (the `db`-fixture bug found during 5.1) | Phase 4 | Claude | ₹0 | Task 5.0 |
-| C7 | Offline suite ~26–27 s against a 30 s budget | Phase 3 | Claude | ₹0 | Task 5.0 |
+| C6 | CI may have been red on `main` (the `db`-fixture bug found during 5.1) | Phase 4 | Claude | ₹0 | **Bug fixed and verified locally** (task 5.0a) — every commit since re-checked against the full offline suite. **Blocked on you, not on work:** confirming the actual GitHub Actions run needs pushing to `origin/main` (unpushed since Phase 0), a shared-remote action that needs your explicit go-ahead, not something to do unilaterally. |
+| C7 | Offline suite ~26–27 s against a 30 s budget | Phase 3 | Claude | ₹0 | **Resolved as a non-issue** (task 5.0c) — the ~20-25s cost is one real multilingual embedding-model load, inherent and already paid exactly once per run; confirmed not fixable by fixture scoping, not a bug to chase further |
 
 ---
 
