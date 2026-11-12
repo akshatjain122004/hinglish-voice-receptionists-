@@ -36,8 +36,8 @@
 | 1 | Booking engine (no AI) | ✅ Complete |
 | 2 | Text agent "brain" | 🟨 Code complete, gate not formally met — see note below; moved on by explicit user decision |
 | 3 | FAQ RAG | 🟨 Code complete, gate not formally met — see note below; moved on by explicit user decision |
-| 4 | Voice in the browser | 🟨 All tasks + both manual checks done (5 real bookings, latency measured); gate not formally met — STT sample test harness built, 10 real recordings (human voice) still needed |
-| 5 | Hinglish + latency hardening | 🟨 In progress — 5.1 and 5.5 done; 5.2 designed (not built); rest not started. **Plan revised 2026-11-11** |
+| 4 | Voice in the browser | ✅ Complete (2026-11-13) — STT sample test's 10 real recordings done, 9/10 |
+| 5 | Hinglish + latency hardening | 🟨 In progress — 5.10 eval-debt pass done (86%), 10/10 manual calls done, STT samples done (9/10); still needed: the latency report run + `VAD_STOP_SECS` decision, and the other 5.x tasks' own gates |
 | 6 | WhatsApp confirmations & reminders | ⬜ Not started |
 | 7 | Google Calendar sync | ⬜ Not started |
 | 8 | Real phone calls | ⬜ Not started |
@@ -542,20 +542,32 @@ pipeline).
 - [x] `tests/integration/test_pipeline_build.py`: the pipeline builds with mocked services, and the frame order is correct.
 - [x] `tests/integration/test_voice_text_equivalence.py`: feed **text frames** (bypassing STT) into the pipeline with a `FakeLLM`. The resulting tool calls match the Phase 2 text agent for the same input.
 - [x] `tests/unit/test_metrics.py`: given synthetic timestamps, per-stage durations are computed correctly.
-- [ ] `live` test `tests/evals/test_stt_samples.py`: record **10 short `.wav` files** of yourself and friends saying Hinglish booking sentences and save them in `tests/fixtures/audio/`. The STT transcript must contain the key entities (day, time, service). Target: at least 8 of 10 pass.
+- [x] `live` test `tests/evals/test_stt_samples.py`: record **10 short `.wav` files** of yourself and friends saying Hinglish booking sentences and save them in `tests/fixtures/audio/`. The STT transcript must contain the key entities (day, time, service). Target: at least 8 of 10 pass.
 
-**STT sample test harness is built; the 10 real recordings are not.** This one genuinely needs a
-human voice — can't be done by Claude. `app/stt_eval.py` (`load_manifest`/`check_entities`/
-`transcribe`/`render_report`, unit-tested with fakes in `tests/unit/test_stt_eval.py`) and
-`tests/evals/test_stt_samples.py` (the `live` test) are ready; `tests/fixtures/audio/manifest.yaml`
-has the 10 sentences to record (varied day/time/service combinations), with instructions at the
-top of the file. `transcribe()` calls Sarvam's batch REST endpoint
-(`POST https://api.sarvam.ai/speech-to-text`, model `saaras:v4` — matching the live pipeline's STT
-model, confirmed working via a live smoke call against an unrelated existing `.wav`), separate from
-the realtime WebSocket STT `app/voice_bot.py` uses for live calls. Missing files are reported, not
-failed, so the test can be re-run as recordings are added one at a time; the 8/10 gate only applies
-once all 10 exist. Verified the skip path end-to-end (zero cost, no files recorded yet) — see
-`reports/stt_samples.md`.
+**Done during Phase 5's manual checks (2026-11-13): 9/10 passed**, clearing the ≥8/10 gate —
+`reports/stt_samples.md`. `app/stt_eval.py` (`load_manifest`/`check_entities`/`transcribe`/
+`render_report`, unit-tested with fakes in `tests/unit/test_stt_eval.py`) and
+`tests/evals/test_stt_samples.py` (the `live` test) worked as designed; `transcribe()` calls
+Sarvam's batch REST endpoint (`POST https://api.sarvam.ai/speech-to-text`, model `saaras:v4` —
+matching the live pipeline's STT model), separate from the realtime WebSocket STT
+`app/voice_bot.py` uses for live calls.
+
+The first run scored **0/10** — not an STT accuracy problem (every transcript was a correct,
+faithful rendering of the sentence actually said) but a `tests/fixtures/audio/manifest.yaml` data
+gap: Sarvam's STT renders Hinglish loanwords and spoken numbers fully in Devanagari (e.g.
+"cleaning" → "क्लीनिंग", "11" → "ग्यारह"), while the manifest's `entities` only listed romanised
+Latin alternates, which can never match Devanagari text. This is exactly what the manifest's own
+design comment anticipates ("may mix Devanagari/Latin script... any one alternate... satisfies
+that entity") — the fix is adding the real alternates the model actually produces, read off the
+failing run's own transcripts, not loosening any check. Two of the existing Devanagari alternates
+(`day: ["monday", "सोमवार"]`, `["sunday", "रविवार"]`) were also wrong for this reason: Sarvam
+transliterates the spoken English day name phonetically ("मंडे", "संडे"), not the native Hindi
+word — fixed to match what's actually produced.
+
+**Real finding, left as a genuine fail, not papered over:** `sample_07` expected "baarah"/12 but
+the recording transcribes as "ग्यारह बजे" (11) — the sentence read "baarah baje." Unclear from
+text alone whether the person misread the sentence or Sarvam misheard 12-for-11; needs a listen,
+not a manifest edit.
 
 **4.7:** `app/metrics.py` is deliberately pipecat-agnostic — `TurnTimer` (4
 optional epoch-second timestamps), `durations_ms()` (pure, the thing
@@ -651,10 +663,9 @@ inflates some readings beyond what the `dropped` filter catches — both are Pha
 ### ✅ Phase complete when
 You can book by voice end to end, the STT sample test passes at ≥ 8/10, and the latency numbers are measured and recorded (no target yet; you optimise in Phase 5).
 
-**Status: booking-by-voice and latency measurement are done; the STT sample test's harness is
-built, but its 10 real recordings (a human-voice task) are not.** Not blocking further work by
-itself, but the gate isn't formally complete until the recordings are made and the live test run,
-or this is explicitly deferred.
+**Status: ✅ gate met.** Booking-by-voice and latency measurement were done at Phase 4's own
+close; the STT sample test's 10 real recordings (a human-voice task, completed during Phase 5's
+manual checks) now pass 9/10 — see the automated-tests note above and `reports/stt_samples.md`.
 
 ---
 
@@ -668,7 +679,7 @@ plan where doing it costs the least extra effort.
 |---|---|---|---|---|---|
 | C1 | Sarvam TTS hello-world smoke test | Phase 0 | anyone | ~₹0.1 | **Propose closing it as done by evidence:** Phase 4 made 5 real voice bookings with live Sarvam TTS, which proves more than a hello-world call would. Needs your OK. |
 | C2 | `chat_cli.py` manual checks: book / cancel / reschedule in Hindi, English, Hinglish, plus the "5:15 book kar do" trick | Phase 2 | you | ~₹2 | **Resolved** — done 2026-11-12 during 5.10d, see Phase 2's manual-checks notes |
-| C3 | 10 real `.wav` recordings for `tests/evals/test_stt_samples.py` (≥ 8/10 gate) | Phase 4 | **a human voice** | ~₹1 | Phase 5 manual checks: the same 3 people making the 10 test calls each record 3–4 sentences |
+| C3 | 10 real `.wav` recordings for `tests/evals/test_stt_samples.py` (≥ 8/10 gate) | Phase 4 | **a human voice** | ~₹1 | **Resolved** — done 2026-11-13, 9/10, see Phase 4's automated-tests note |
 | C4 | Eval pass rate stuck at 56% (Phase 2) / 73% (Phase 3), gate is ≥ 85% | Phases 2–3 | you + Claude | ~₹5–10 | **Resolved** — 86% as of the 4th live run during 5.10, see 5.10's notes |
 | C5 | Eval "reply language matches caller language" checker was never built | Phase 2 | Claude | ₹0 | **Resolved** — `check_language_match` built during 5.10a |
 | C6 | CI may have been red on `main` (the `db`-fixture bug found during 5.1) | Phase 4 | Claude | ₹0 | Task 5.0 |
@@ -1264,7 +1275,7 @@ pause Y/N) to confirm it's not now *too* long; no unit test can validate that tr
   - **Heavy VAD/turn fragmentation** (worst in call 6) causing repeated re-asking of info the caller already gave — same root cause documented since Phase 4, not newly root-caused here.
   - **Call 7: booking succeeded but was never verbally confirmed** before the bot moved to an unrelated question — not yet investigated further.
 
-- [ ] **Same session:** each of the 3 people records 3–4 of the 10 sentences in `tests/fixtures/audio/manifest.yaml`. Then run `pytest -m live tests/evals/test_stt_samples.py`. This closes Phase 4's last gap (C3).
+- [x] **Same session:** each of the 3 people records 3–4 of the 10 sentences in `tests/fixtures/audio/manifest.yaml`. Then run `pytest -m live tests/evals/test_stt_samples.py`. This closes Phase 4's last gap (C3). **Done 2026-11-13 — 9/10 passed** (see Phase 4's automated-tests note for the manifest fix this needed and `sample_07`'s unresolved real finding).
 - [ ] Use the "awkward pause" column to decide the final `VAD_STOP_SECS` (keep 0.7, or try 0.5/0.6), and record the decision in `docs/architecture.md`.
 - [ ] Run `scripts/latency_report.py` and save the result to `reports/latency_phase5.md`, with both the comparable and the perceived columns and a side-by-side against the Phase 4 table.
 

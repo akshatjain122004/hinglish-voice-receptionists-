@@ -18,69 +18,72 @@
 - file: sample_01.wav
   text: "Kal shaam saade paanch baje cleaning ka slot chahiye."
   entities:
-    day: ["kal"]
-    time: ["paanch", "5"]
-    service: ["cleaning"]
+    day: ["kal", "कल"]
+    time: ["paanch", "5", "पाँच", "पांच"]
+    service: ["cleaning", "क्लीनिंग"]
 
 - file: sample_02.wav
   text: "Parso subah das baje consultation book kar do."
   entities:
-    day: ["parso"]
-    time: ["das", "10"]
-    service: ["consultation"]
+    day: ["parso", "परसों"]
+    time: ["das", "10", "दस"]
+    service: ["consultation", "कंसल्टेशन"]
 
 - file: sample_03.wav
   text: "Aaj dopahar teen baje filling ka time hai kya?"
   entities:
-    day: ["aaj"]
-    time: ["teen", "3"]
-    service: ["filling"]
+    day: ["aaj", "आज"]
+    time: ["teen", "3", "तीन"]
+    service: ["filling", "फिलिंग"]
 
 - file: sample_04.wav
   text: "Mujhe Monday ko root canal ke liye appointment chahiye, subah gyarah baje."
   entities:
-    day: ["monday", "सोमवार"]
-    time: ["gyarah", "11"]
-    service: ["root canal", "root"]
+    # Sarvam transliterates the spoken English day/service name phonetically
+    # into Devanagari ("मंडे", "रूट कैनाल") rather than using the native
+    # Hindi word ("सोमवार") - found via the actual transcript, not guessed.
+    day: ["monday", "सोमवार", "मंडे"]
+    time: ["gyarah", "11", "ग्यारह"]
+    service: ["root canal", "root", "रूट"]
 
 - file: sample_05.wav
   text: "Kal shaam saat baje teeth whitening karwani hai."
   entities:
-    day: ["kal"]
-    time: ["saat", "7"]
-    service: ["whitening"]
+    day: ["kal", "कल"]
+    time: ["saat", "7", "सात"]
+    service: ["whitening", "वाइटनिंग"]
 
 - file: sample_06.wav
   text: "Sunday ko subah nau baje cleaning ka slot hai kya?"
   entities:
-    day: ["sunday", "रविवार"]
-    time: ["nau", "9"]
-    service: ["cleaning"]
+    day: ["sunday", "रविवार", "संडे"]
+    time: ["nau", "9", "नौ"]
+    service: ["cleaning", "क्लीनिंग"]
 
 - file: sample_07.wav
   text: "Mera consultation Tuesday dopahar baarah baje rakh dena."
   entities:
-    day: ["tuesday", "मंगलवार"]
-    time: ["baarah", "12"]
-    service: ["consultation"]
+    day: ["tuesday", "मंगलवार", "ट्यूसडे"]
+    time: ["baarah", "12", "बारह"]
+    service: ["consultation", "कंसल्टेशन"]
 
 - file: sample_08.wav
   text: "Aaj raat ko aath baje filling ka appointment chahiye."
   entities:
-    day: ["aaj"]
-    time: ["aath", "8"]
-    service: ["filling"]
+    day: ["aaj", "आज"]
+    time: ["aath", "8", "आठ"]
+    service: ["filling", "फिलिंग"]
 
 - file: sample_09.wav
   text: "Parso shaam chhe baje root canal book karna hai."
   entities:
-    day: ["parso"]
-    time: ["chhe", "6"]
-    service: ["root canal", "root"]
+    day: ["parso", "परसों"]
+    time: ["chhe", "6", "छह"]
+    service: ["root canal", "root", "रूट"]
 
 - file: sample_10.wav
   text: "Kal subah saade das baje whitening ke liye time chahiye."
   entities:
-    day: ["kal"]
-    time: ["das", "10"]
-    service: ["whitening"]
+    day: ["kal", "कल"]
+    time: ["das", "10", "दस"]
+    service: ["whitening", "वाइटनिंग"]

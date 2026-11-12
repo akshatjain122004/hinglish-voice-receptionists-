@@ -2,7 +2,7 @@
 
 Guidance for Claude Code when working in this repository. Read this file and `docs/BUILD_PLAN.md` before making changes.
 
-**Current phase:** 4 — Voice in the browser *(see `docs/BUILD_PLAN.md` status board for the full list; bump this the moment a phase's status board row flips to ✅ Complete. Phases 2 and 3 were both moved on from by explicit user decision with their gates not formally met — see the status board notes on those phases for why. The user is tracking the overall eval pass rate at the end of every phase going forward to see whether later phases move it without extra work)*.
+**Current phase:** 5 — Hinglish + latency hardening *(see `docs/BUILD_PLAN.md` status board for the full list; bump this the moment a phase's status board row flips to ✅ Complete. Phases 2 and 3 were both moved on from by explicit user decision with their gates not formally met — see the status board notes on those phases for why. Phase 4 flipped to ✅ Complete on 2026-11-13 when its last blocker, the STT sample test's 10 real recordings, finally landed (9/10). The user is tracking the overall eval pass rate at the end of every phase going forward to see whether later phases move it without extra work)*.
 
 ## What this project is
 
