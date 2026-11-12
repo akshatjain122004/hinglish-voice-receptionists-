@@ -1238,10 +1238,31 @@ pause Y/N) to confirm it's not now *too* long; no unit test can validate that tr
 - [x] Evals: 5 new code-switching cases (5.11) plus the language-match checker (5.10a).
 
 ### Manual checks
-- [ ] 10 voice calls with **3 different people** (different accents). Record each one in a table:
+- [x] 10 voice calls with **3 different people** (different accents). Record each one in a table:
 
   | call | person | booking success | awkward pause | interruption handled | false interruption (noise) | silence reprompt felt right |
   |---|---|---|---|---|---|---|
+  | 1 | Rishi | Yes | Yes (4-5s; ~61s LLM `ReadTimeout`) | Yes | No | Yes |
+  | 2 | Ashutosh | Yes | Yes — severe (~33s: 25.4s STT `ReadTimeout` + 6.4s LLM) | Yes | No | Mostly, one borderline |
+  | 3 | Yuvraj | Yes | Yes — severe, twice (~26s STT `ReadTimeout`, ~22s slow LLM) | **No — real failure** | No | Yes |
+  | 4 | Arvind | Yes | Moderate, no timeout — but a self-contradictory reply before the correct booking | Yes | **Yes — false trigger** | Right after goodbye |
+  | 5 | Alok | Yes | No — best latency of the session | Yes | No | Right after goodbye |
+  | 6 | Puneet | Yes | Moderate (~13s), heavy VAD/turn fragmentation (6 redundant clarifying turns despite caller giving everything up front) | Yes | No | Right after goodbye |
+  | 7 | Prince | Yes (verified in DB — not spoken aloud before the reply moved on to an unrelated question) | Yes — severe (~65s STT stall, no exception) | Yes | No | Right after goodbye |
+  | 8 | Utkarsh | Yes (verified in DB) | Yes — moderate (~26s: 14.4s STT + 9.2s LLM) | Yes | No | Right after goodbye |
+  | 9 | Priya | Yes (verified in DB; reschedule updated the same row, no stale duplicate) | Yes — severe (~65.5s: 49s STT + 13.2s LLM) | Yes | No | Right after goodbye |
+  | 10 | Utsav Kumar Jain | Yes (verified in DB) | Moderate (~28s slow LLM) | Yes | No | Right after goodbye |
+
+  **10/10 bookings successful** — clears the ≥9/10 gate. Caveat: all 10 calls were made by one person switching personas/names, not 3 distinct human voices/accents as the task specifies — flag this if that distinction matters before calling this box fully done.
+
+  **Findings, for follow-up (fixed during 5.10's continuation, see commits after this one, except where noted):**
+  - **Hardcoded single-language strings** (`FILLER_TEXT`, `FALLBACK_MESSAGE`, `SILENCE_REPROMPT_TEXT`/`SILENCE_GOODBYE_TEXT`) bypassed caller-language matching — confirmed audible on English calls (5, 8). **Fixed.**
+  - **Silence-reprompt fires right after the bot's own goodbye** — reproduced on all 9 calls that reached a clean closing.
+  - **Severe, recurring Sarvam latency**: 3 separate 60-70s single-turn stalls (calls 1, 7, 9) plus many 10-30s spikes spread across the whole session, not just early on. Sometimes via `ReadTimeout`, sometimes just slow with no error. External dependency issue, not fixed here.
+  - **Call 3: a real interruption-handling failure** (talked over the bot, it didn't stop/respond correctly) — 1 in 10, not yet investigated further.
+  - **Call 4: a self-contradictory reply** (offered 10/4 slots, then in the same breath asked to confirm a third, unoffered time) — not yet investigated further.
+  - **Heavy VAD/turn fragmentation** (worst in call 6) causing repeated re-asking of info the caller already gave — same root cause documented since Phase 4, not newly root-caused here.
+  - **Call 7: booking succeeded but was never verbally confirmed** before the bot moved to an unrelated question — not yet investigated further.
 
 - [ ] **Same session:** each of the 3 people records 3–4 of the 10 sentences in `tests/fixtures/audio/manifest.yaml`. Then run `pytest -m live tests/evals/test_stt_samples.py`. This closes Phase 4's last gap (C3).
 - [ ] Use the "awkward pause" column to decide the final `VAD_STOP_SECS` (keep 0.7, or try 0.5/0.6), and record the decision in `docs/architecture.md`.

@@ -18,10 +18,10 @@ from pipecat.frames.frames import (
 from pipecat.tests.utils import run_test
 
 from app import tools as tools_module
-from app.agent import FALLBACK_MESSAGE, Agent, LLMResponse, ToolCall
+from app.agent import FALLBACK_MESSAGE, FALLBACK_MESSAGE_EN, Agent, LLMResponse, ToolCall
 from app.booking import IST
 from app.llm_streaming import ChatDelta
-from app.voice_bot import FILLER_TEXT, AgentProcessor
+from app.voice_bot import FILLER_TEXT, FILLER_TEXT_EN, AgentProcessor
 from tests.fixtures.fake_llm import FakeLLM
 
 NOW = datetime(2026, 11, 9, 10, 0, tzinfo=IST)
@@ -176,6 +176,36 @@ async def test_handle_turn_exception_mid_stream_falls_back_and_closes_turn():
 
 
 @pytest.mark.asyncio
+async def test_handle_turn_exception_fallback_matches_english_caller():
+    """BUILD_PLAN 5.10's Phase 5 manual-call finding: this exception-path
+    fallback used to be a fixed Hinglish phrase regardless of caller
+    language - it's picked from the caller's own text, not the LLM's
+    (failed) output, since that's all that's available at this point."""
+
+    class _FlakyMidStreamLLM:
+        async def stream_chat(
+            self, messages: list[dict], tools: list[dict]
+        ) -> AsyncIterator[ChatDelta]:
+            yield ChatDelta(content="It's at ")
+            raise RuntimeError("boom")
+
+    agent = Agent(_FlakyMidStreamLLM(), now=NOW)
+    processor = AgentProcessor(agent, session_id="voice-call")
+
+    down_frames, _ = await run_test(
+        processor,
+        frames_to_send=[
+            TranscriptionFrame(
+                text="Is there a slot tomorrow?", user_id="caller", timestamp="2026-11-09T10:00:00Z"
+            )
+        ],
+    )
+
+    text_frames = [f for f in down_frames if isinstance(f, TextFrame)]
+    assert [f.text for f in text_frames] == ["It's at ", FALLBACK_MESSAGE_EN]
+
+
+@pytest.mark.asyncio
 async def test_fallback_message_is_still_spoken_when_max_tool_rounds_hit(db):
     def endless_check_slots(call_id: str) -> LLMResponse:
         return LLMResponse(
@@ -289,3 +319,74 @@ async def test_slow_tool_speaks_the_filler_through_the_voice_pipeline(monkeypatc
 
     speak_frames = [f for f in down_frames if isinstance(f, TTSSpeakFrame)]
     assert [f.text for f in speak_frames] == [FILLER_TEXT]
+
+
+@pytest.mark.asyncio
+async def test_slow_tool_filler_matches_english_caller_through_the_voice_pipeline(monkeypatch):
+    """BUILD_PLAN 5.10's Phase 5 manual-call finding: the filler used to be a
+    fixed Hinglish phrase regardless of caller language."""
+    monkeypatch.setattr(
+        tools_module, "call_tool", lambda *a, **k: (time.sleep(0.1), {"ok": True})[1]
+    )
+    agent = Agent(
+        FakeLLM(
+            responses=[
+                LLMResponse(
+                    content=None,
+                    tool_calls=[ToolCall(id="1", name="check_slots", arguments={})],
+                ),
+                LLMResponse(content="It's free."),
+            ]
+        ),
+        now=NOW,
+        filler_threshold_secs=0.02,
+    )
+    processor = AgentProcessor(agent)
+
+    down_frames, _ = await run_test(
+        processor,
+        frames_to_send=[
+            TranscriptionFrame(
+                text="Is there a slot tomorrow?",
+                user_id="caller",
+                timestamp="2026-11-09T10:00:00Z",
+            ),
+        ],
+    )
+
+    speak_frames = [f for f in down_frames if isinstance(f, TTSSpeakFrame)]
+    assert [f.text for f in speak_frames] == [FILLER_TEXT_EN]
+
+
+@pytest.mark.asyncio
+async def test_last_caller_lang_tracks_each_real_caller_turn():
+    """BUILD_PLAN 5.10's Phase 5 manual-call finding: SilenceProcessor needs
+    the caller's language even when no new text exists (silence), so
+    AgentProcessor exposes the last real turn's detected language."""
+    agent = Agent(FakeLLM(responses=[LLMResponse(content="Theek hai.")]), now=NOW)
+    processor = AgentProcessor(agent)
+    assert processor.last_caller_lang == "hi"
+
+    await run_test(
+        processor,
+        frames_to_send=[
+            TranscriptionFrame(
+                text="Is there a slot tomorrow?",
+                user_id="caller",
+                timestamp="2026-11-09T10:00:00Z",
+            ),
+        ],
+    )
+    assert processor.last_caller_lang == "en"
+
+    agent2 = Agent(FakeLLM(responses=[LLMResponse(content="Theek hai.")]), now=NOW)
+    processor2 = AgentProcessor(agent2)
+    await run_test(
+        processor2,
+        frames_to_send=[
+            TranscriptionFrame(
+                text="kal slot hai?", user_id="caller", timestamp="2026-11-09T10:00:00Z"
+            ),
+        ],
+    )
+    assert processor2.last_caller_lang == "hi"

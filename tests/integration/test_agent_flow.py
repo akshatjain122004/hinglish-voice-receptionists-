@@ -2,7 +2,14 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from app.agent import FALLBACK_MESSAGE, Agent, LLMResponse, ToolCall
+from app.agent import (
+    FALLBACK_MESSAGE,
+    FALLBACK_MESSAGE_EN,
+    Agent,
+    LLMResponse,
+    ToolCall,
+    fallback_message,
+)
 from app.booking import IST, book, find_by_phone, get_free_slots
 from app.llm_streaming import ChatDelta, ToolCallDelta
 from tests.fixtures.fake_llm import FakeLLM
@@ -128,6 +135,37 @@ async def test_stops_after_max_tool_rounds_without_an_infinite_loop(db):
 
     assert reply == FALLBACK_MESSAGE
     assert len(fake.calls) == 4
+
+
+@pytest.mark.asyncio
+async def test_max_tool_rounds_fallback_matches_english_caller(db):
+    """BUILD_PLAN 5.10's Phase 5 manual-call finding: this fallback used to
+    be a fixed Hinglish phrase regardless of caller language."""
+
+    def endless_check_slots(call_id: str) -> LLMResponse:
+        return LLMResponse(
+            content=None,
+            tool_calls=[
+                ToolCall(
+                    id=call_id, name="check_slots", arguments={"date": "kal", "service": "cleaning"}
+                )
+            ],
+        )
+
+    fake = FakeLLM(responses=[endless_check_slots(str(i)) for i in range(4)])
+    agent = Agent(fake, now=NOW, max_tool_rounds=4)
+
+    reply = await agent.handle_turn("call-3", "I need an appointment")
+
+    assert reply == FALLBACK_MESSAGE_EN
+
+
+class TestFallbackMessage:
+    def test_hindi_or_hinglish_input_gets_the_hindi_phrase(self):
+        assert fallback_message("hi") == FALLBACK_MESSAGE
+
+    def test_english_input_gets_the_english_phrase(self):
+        assert fallback_message("en") == FALLBACK_MESSAGE_EN
 
 
 @pytest.mark.asyncio

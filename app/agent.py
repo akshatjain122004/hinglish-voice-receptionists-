@@ -19,6 +19,7 @@ from loguru import logger
 
 from app import prompts, tools
 from app.llm_streaming import ChatDelta, ToolCallAccumulator, ToolCallDelta
+from app.speech import detect_lang
 
 MAX_TOOL_ROUNDS = 4
 
@@ -31,6 +32,22 @@ FALLBACK_MESSAGE = (
     "Maaf kijiye, thoda technical issue ho raha hai. "
     "Main staff se confirm karke aapko WhatsApp kar dungi."
 )
+FALLBACK_MESSAGE_EN = (
+    "Sorry, I'm having a bit of a technical issue. "
+    "I'll check with our staff and follow up on WhatsApp."
+)
+
+
+def fallback_message(lang: str) -> str:
+    """Picks the fallback phrase matching the caller's language.
+
+    Found during Phase 5's manual voice calls: this fixed phrase (and
+    FILLER_TEXT/SILENCE_REPROMPT_TEXT in voice_bot.py) was spoken verbatim
+    regardless of caller language, the same bug 5.10 fixed in the system
+    prompt - except these are plain strings, never touched by the LLM, so
+    that fix couldn't reach them.
+    """
+    return FALLBACK_MESSAGE_EN if lang == "en" else FALLBACK_MESSAGE
 
 
 @dataclass
@@ -178,7 +195,7 @@ class Agent:
         *,
         on_tool_call: Callable[[str, dict[str, Any], dict[str, Any]], None] | None = None,
         on_reply_chunk: Callable[[str], Awaitable[None]] | None = None,
-        on_slow_tool: Callable[[], Awaitable[None]] | None = None,
+        on_slow_tool: Callable[[str], Awaitable[None]] | None = None,
         on_usage: Callable[[dict[str, int]], None] | None = None,
         caller_phone: str | None = None,
     ) -> str:
@@ -252,7 +269,7 @@ class Agent:
                     done, _pending = await asyncio.wait({task}, timeout=self.filler_threshold_secs)
                     if task not in done:
                         filler_fired = True
-                        await on_slow_tool()
+                        await on_slow_tool(detect_lang(user_text))
                 result = await task
                 if on_tool_call is not None:
                     on_tool_call(tc.name, tc.arguments, result)
@@ -265,5 +282,6 @@ class Agent:
                     }
                 )
 
-        history.append({"role": "assistant", "content": FALLBACK_MESSAGE})
-        return FALLBACK_MESSAGE
+        msg = fallback_message(detect_lang(user_text))
+        history.append({"role": "assistant", "content": msg})
+        return msg

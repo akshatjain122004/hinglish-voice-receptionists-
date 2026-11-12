@@ -55,7 +55,7 @@ from pipecat.services.sarvam.tts import SarvamHttpTTSService
 from pipecat.transports.base_transport import BaseTransport, TransportParams
 from pipecat.workers.runner import WorkerRunner
 
-from app.agent import FALLBACK_MESSAGE, Agent, SarvamLLMClient
+from app.agent import Agent, SarvamLLMClient, fallback_message
 from app.config import get_settings
 from app.db import CallLog, get_session
 from app.metrics import TurnTracker, ensure_file_sink
@@ -71,11 +71,27 @@ EndCall = Callable[[], Awaitable[None]]
 # once, then ends the call after a second silent window of the same length.
 SILENCE_TIMEOUT_SECS = 5.0
 SILENCE_REPROMPT_TEXT = "Hello, kya aap line par hain?"
+SILENCE_REPROMPT_TEXT_EN = "Hello, are you still there?"
 SILENCE_GOODBYE_TEXT = "Theek hai, main call band kar rahi hoon. Dhanyavaad, alvida!"
+SILENCE_GOODBYE_TEXT_EN = "Okay, I'll end the call now. Thank you, goodbye!"
 
 # BUILD_PLAN 5.4: spoken when Agent.handle_turn()'s on_slow_tool fires (a
 # single tool call running past app.agent.FILLER_THRESHOLD_SECS).
 FILLER_TEXT = "Ek second, check karti hoon..."
+FILLER_TEXT_EN = "One second, let me check..."
+
+
+def _lang_text(lang: str, hi_text: str, en_text: str) -> str:
+    """Picks between a Hindi/Hinglish and an English fixed phrase.
+
+    Found during Phase 5's manual voice calls: FILLER_TEXT,
+    SILENCE_REPROMPT_TEXT and SILENCE_GOODBYE_TEXT (and app.agent's
+    FALLBACK_MESSAGE) were all spoken verbatim regardless of caller
+    language - these are plain strings the LLM never touches, so the
+    system-prompt language fix from 5.10 couldn't reach them.
+    """
+    return en_text if lang == "en" else hi_text
+
 
 CLINIC_PATH = Path(__file__).resolve().parent.parent / "data" / "clinic.yaml"
 
@@ -184,6 +200,11 @@ class AgentProcessor(FrameProcessor):
         # False` note below), so a tool call already decided on (e.g. a booking)
         # always finishes and lands in history even if the caller stops hearing it.
         self._interrupted = False
+        # Updated on every real caller turn (see below); read by
+        # build_pipeline()'s SilenceProcessor (via lang_provider) so the
+        # silence reprompt/goodbye also matches the caller's language, even
+        # though no new caller text exists at the moment it fires.
+        self.last_caller_lang = "hi"
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
@@ -201,6 +222,7 @@ class AgentProcessor(FrameProcessor):
 
         if isinstance(frame, TranscriptionFrame) and not is_noise(frame.text):
             self._interrupted = False
+            self.last_caller_lang = detect_lang(frame.text)
 
             # Never cancel a booking halfway (BUILD_PLAN 5.2's #1 concern):
             # Pipecat's default interruption handling cancels whatever task is
@@ -247,7 +269,7 @@ class AgentProcessor(FrameProcessor):
                 first_chunk_seen = True
                 await self.push_frame(TextFrame(chunk), direction)
 
-            async def on_slow_tool() -> None:
+            async def on_slow_tool(lang: str) -> None:
                 # BUILD_PLAN 5.4: a fixed phrase from code, not LLM-generated
                 # content, so it's safe to speak even though this round
                 # contains a tool call - the suppression gate above only ever
@@ -255,9 +277,13 @@ class AgentProcessor(FrameProcessor):
                 # a TTSSpeakFrame (bypasses the sentence aggregator - it would
                 # otherwise sit waiting for punctuation that never arrives)
                 # and skipped once the caller has already started talking
-                # again, same reasoning as on_reply_chunk's guard.
+                # again, same reasoning as on_reply_chunk's guard. `lang` is
+                # Agent.handle_turn()'s own detect_lang(user_text) for this
+                # turn - see app.agent.fallback_message's docstring for why
+                # this plain string needed its own language fix.
                 if not self._interrupted:
-                    await self.push_frame(TTSSpeakFrame(text=FILLER_TEXT), direction)
+                    text = _lang_text(lang, FILLER_TEXT, FILLER_TEXT_EN)
+                    await self.push_frame(TTSSpeakFrame(text=text), direction)
 
             def on_usage(usage: dict[str, int]) -> None:
                 # BUILD_PLAN 5.7a: the latest round's usage wins if a turn
@@ -282,7 +308,7 @@ class AgentProcessor(FrameProcessor):
                 # the turn with a fallback, not propagate and leave TTS's turn
                 # context open for the next caller turn.
                 logger.exception("Agent.handle_turn failed mid-stream; falling back")
-                reply = FALLBACK_MESSAGE
+                reply = fallback_message(detect_lang(frame.text))
                 turn_failed = True
 
             if (not first_chunk_seen or turn_failed) and not self._interrupted:
@@ -352,15 +378,24 @@ class SilenceProcessor(FrameProcessor):
         self,
         *,
         silence_timeout: float = SILENCE_TIMEOUT_SECS,
-        reprompt_text: str = SILENCE_REPROMPT_TEXT,
-        goodbye_text: str = SILENCE_GOODBYE_TEXT,
+        reprompt_text: str | None = None,
+        goodbye_text: str | None = None,
+        lang_provider: Callable[[], str] | None = None,
         end_call: EndCall | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self._silence_timeout = silence_timeout
-        self._reprompt_text = reprompt_text
-        self._goodbye_text = goodbye_text
+        # An explicit reprompt_text/goodbye_text always wins (e.g. a test
+        # pinning exact text); otherwise the language-matching text is
+        # picked from lang_provider() each time the timer actually fires -
+        # not once at construction - since the caller's language can change
+        # between the processor being built and the timer firing.
+        # lang_provider defaults to "hi" (unchanged behaviour) when not
+        # given, same reasoning as app.agent.fallback_message.
+        self._reprompt_text_override = reprompt_text
+        self._goodbye_text_override = goodbye_text
+        self._lang_provider = lang_provider or (lambda: "hi")
         self._end_call = end_call
         self._turn_in_progress = False
         self._reprompted = False
@@ -409,11 +444,15 @@ class SilenceProcessor(FrameProcessor):
             # ends the call. Pushed as a TTSSpeakFrame, not through the LLM,
             # so it's never added to Agent's history (BUILD_PLAN 5.3).
             self._reprompted = True
-            await self.push_frame(
-                TTSSpeakFrame(text=self._reprompt_text), FrameDirection.DOWNSTREAM
+            text = self._reprompt_text_override or _lang_text(
+                self._lang_provider(), SILENCE_REPROMPT_TEXT, SILENCE_REPROMPT_TEXT_EN
             )
+            await self.push_frame(TTSSpeakFrame(text=text), FrameDirection.DOWNSTREAM)
         else:
-            await self.push_frame(TTSSpeakFrame(text=self._goodbye_text), FrameDirection.DOWNSTREAM)
+            text = self._goodbye_text_override or _lang_text(
+                self._lang_provider(), SILENCE_GOODBYE_TEXT, SILENCE_GOODBYE_TEXT_EN
+            )
+            await self.push_frame(TTSSpeakFrame(text=text), FrameDirection.DOWNSTREAM)
             if self._end_call is not None:
                 await self._end_call()
 
@@ -476,19 +515,25 @@ def build_pipeline(
     `TTSLatencyMarker` is only added when `turn_tracker` is given, since it's
     the thing that needs one to do anything.
     """
+    agent_processor = AgentProcessor(
+        agent,
+        session_id=session_id,
+        on_tool_call=on_tool_call,
+        on_turn=on_turn,
+        turn_tracker=turn_tracker,
+    )
     stages = [
         transport.input(),
         VADProcessor(vad_analyzer=vad_analyzer),
         BargeInProcessor(),
         stt,
-        AgentProcessor(
-            agent,
-            session_id=session_id,
-            on_tool_call=on_tool_call,
-            on_turn=on_turn,
-            turn_tracker=turn_tracker,
-        ),
-        SilenceProcessor(end_call=end_call),
+        agent_processor,
+        # lang_provider reads agent_processor.last_caller_lang live (not a
+        # snapshot) - BUILD_PLAN 5.10's Phase 5 manual-call findings: the
+        # reprompt/goodbye are plain strings, so they need the same
+        # caller-language matching the system prompt and FALLBACK_MESSAGE/
+        # FILLER_TEXT already got.
+        SilenceProcessor(end_call=end_call, lang_provider=lambda: agent_processor.last_caller_lang),
         tts,
     ]
     if turn_tracker is not None:

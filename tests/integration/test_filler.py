@@ -38,10 +38,10 @@ async def test_slow_tool_fires_filler_before_the_answer(monkeypatch):
         tools_module, "call_tool", lambda *a, **k: (time.sleep(0.15), {"ok": True})[1]
     )
 
-    fired: list[None] = []
+    fired: list[str] = []
 
-    async def on_slow_tool() -> None:
-        fired.append(None)
+    async def on_slow_tool(lang: str) -> None:
+        fired.append(lang)
 
     agent = Agent(
         FakeLLM(responses=[_tool_call("1"), LLMResponse(content="Yahan hai.")]),
@@ -50,7 +50,7 @@ async def test_slow_tool_fires_filler_before_the_answer(monkeypatch):
     )
     reply = await agent.handle_turn("call-1", "kal slot hai?", on_slow_tool=on_slow_tool)
 
-    assert len(fired) == 1
+    assert fired == ["hi"]
     assert reply == "Yahan hai."
 
 
@@ -58,10 +58,10 @@ async def test_slow_tool_fires_filler_before_the_answer(monkeypatch):
 async def test_fast_tool_produces_no_filler(monkeypatch):
     monkeypatch.setattr(tools_module, "call_tool", lambda *a, **k: {"ok": True})
 
-    fired: list[None] = []
+    fired: list[str] = []
 
-    async def on_slow_tool() -> None:
-        fired.append(None)
+    async def on_slow_tool(lang: str) -> None:
+        fired.append(lang)
 
     agent = Agent(
         FakeLLM(responses=[_tool_call("1"), LLMResponse(content="Yahan hai.")]),
@@ -75,15 +75,41 @@ async def test_fast_tool_produces_no_filler(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_slow_tool_filler_matches_english_caller(monkeypatch):
+    """BUILD_PLAN 5.10's Phase 5 manual-call finding: the filler used to be a
+    fixed Hinglish phrase regardless of caller language."""
+    monkeypatch.setattr(
+        tools_module, "call_tool", lambda *a, **k: (time.sleep(0.15), {"ok": True})[1]
+    )
+
+    fired: list[str] = []
+
+    async def on_slow_tool(lang: str) -> None:
+        fired.append(lang)
+
+    agent = Agent(
+        FakeLLM(responses=[_tool_call("1"), LLMResponse(content="It's free.")]),
+        now=NOW,
+        filler_threshold_secs=THRESHOLD,
+    )
+    reply = await agent.handle_turn(
+        "call-1", "Is there a slot tomorrow?", on_slow_tool=on_slow_tool
+    )
+
+    assert fired == ["en"]
+    assert reply == "It's free."
+
+
+@pytest.mark.asyncio
 async def test_two_slow_rounds_in_one_turn_still_fire_only_one_filler(monkeypatch):
     monkeypatch.setattr(
         tools_module, "call_tool", lambda *a, **k: (time.sleep(0.15), {"ok": True})[1]
     )
 
-    fired: list[None] = []
+    fired: list[str] = []
 
-    async def on_slow_tool() -> None:
-        fired.append(None)
+    async def on_slow_tool(lang: str) -> None:
+        fired.append(lang)
 
     agent = Agent(
         FakeLLM(

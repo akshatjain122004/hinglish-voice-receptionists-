@@ -20,7 +20,13 @@ from pipecat.frames.frames import (
 )
 from pipecat.tests.utils import SleepFrame, run_test
 
-from app.voice_bot import SILENCE_GOODBYE_TEXT, SILENCE_REPROMPT_TEXT, SilenceProcessor
+from app.voice_bot import (
+    SILENCE_GOODBYE_TEXT,
+    SILENCE_GOODBYE_TEXT_EN,
+    SILENCE_REPROMPT_TEXT,
+    SILENCE_REPROMPT_TEXT_EN,
+    SilenceProcessor,
+)
 
 TIMEOUT = 0.03
 WAIT_PAST_TIMEOUT = SleepFrame(sleep=TIMEOUT * 3)
@@ -57,6 +63,27 @@ async def test_reprompt_after_silence_following_bot_speech():
 
 
 @pytest.mark.asyncio
+async def test_reprompt_matches_english_caller_via_lang_provider():
+    """BUILD_PLAN 5.10's Phase 5 manual-call finding: the reprompt/goodbye
+    used to be fixed Hinglish phrases regardless of caller language. No new
+    caller text exists at the moment silence fires, so SilenceProcessor
+    reads whatever lang_provider() returns right then, not a snapshot taken
+    at construction time."""
+    down_frames, _ = await run_test(
+        SilenceProcessor(silence_timeout=TIMEOUT, lang_provider=lambda: "en"),
+        frames_to_send=[
+            LLMFullResponseStartFrame(),
+            LLMFullResponseEndFrame(),
+            LET_CONTROL_FRAMES_DRAIN,
+            BotStoppedSpeakingFrame(),
+            WAIT_PAST_TIMEOUT,
+        ],
+    )
+
+    assert _speak_frames(down_frames) == [SILENCE_REPROMPT_TEXT_EN]
+
+
+@pytest.mark.asyncio
 async def test_second_silence_ends_the_call():
     end_call_invocations: list[None] = []
 
@@ -81,6 +108,25 @@ async def test_second_silence_ends_the_call():
 
     assert _speak_frames(down_frames) == [SILENCE_REPROMPT_TEXT, SILENCE_GOODBYE_TEXT]
     assert len(end_call_invocations) == 1
+
+
+@pytest.mark.asyncio
+async def test_second_silence_goodbye_matches_english_caller_via_lang_provider():
+    down_frames, _ = await run_test(
+        SilenceProcessor(silence_timeout=TIMEOUT, lang_provider=lambda: "en"),
+        frames_to_send=[
+            LLMFullResponseStartFrame(),
+            LLMFullResponseEndFrame(),
+            LET_CONTROL_FRAMES_DRAIN,
+            BotStoppedSpeakingFrame(),
+            WAIT_PAST_TIMEOUT,  # -> reprompt
+            BotStartedSpeakingFrame(),
+            BotStoppedSpeakingFrame(),
+            WAIT_PAST_TIMEOUT,  # -> goodbye
+        ],
+    )
+
+    assert _speak_frames(down_frames) == [SILENCE_REPROMPT_TEXT_EN, SILENCE_GOODBYE_TEXT_EN]
 
 
 @pytest.mark.asyncio
