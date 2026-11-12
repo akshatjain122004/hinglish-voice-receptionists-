@@ -37,7 +37,7 @@
 | 2 | Text agent "brain" | 🟨 Code complete, gate not formally met — see note below; moved on by explicit user decision |
 | 3 | FAQ RAG | 🟨 Code complete, gate not formally met — see note below; moved on by explicit user decision |
 | 4 | Voice in the browser | ✅ Complete (2026-11-13) — STT sample test's 10 real recordings done, 9/10 |
-| 5 | Hinglish + latency hardening | 🟨 In progress — 5.10 eval-debt pass done (86%), 10/10 manual calls done, STT samples done (9/10); still needed: the latency report run + `VAD_STOP_SECS` decision, and the other 5.x tasks' own gates |
+| 5 | Hinglish + latency hardening | 🟨 All tasks done except 5.12 (conditional, not needed — see its note) and all automated/manual checks done; gate not formally met — latency p50/p95 are over target, but tonight's p95 looks like a bad-API-night artifact, not a true number. **Plan: re-measure on a calmer night before deciding whether to tune code or revise the target.** |
 | 6 | WhatsApp confirmations & reminders | ⬜ Not started |
 | 7 | Google Calendar sync | ⬜ Not started |
 | 8 | Real phone calls | ⬜ Not started |
@@ -1240,13 +1240,20 @@ pause Y/N) to confirm it's not now *too* long; no unit test can validate that tr
   - Rough budget, to show why: VAD stop (0.7 s, invisible) + STT (~0.16 s) + LLM TTFT + first-sentence TTS (~1.0–1.4 s on HTTP). Even with a fast TTFT, the caller-perceived p50 is likely around 2.3 s or more, unless TTS gets faster.
   - If swapped, use `SarvamTTSService` (`InterruptibleTTSService`), which already handles reconnecting after interruptions.
 
+  **Condition not met — intentionally not done.** The post-manual-check latency report
+  (`reports/latency_phase5.md`, 2026-11-13) shows `tts_latency_ms` p50 1304ms, p95 3106ms — fine,
+  and in line with Phase 4's own number. The actual tail-latency problem is `stt_latency_ms`/
+  `llm_latency_ms` reliability (Sarvam API flakiness, up to 60-70s on individual calls), which a
+  TTS transport swap wouldn't touch. Re-open only if a calmer-night re-measurement still shows TTS
+  itself as the bottleneck, not STT/LLM.
+
 ### Automated tests
-- [ ] `tests/unit/test_latency_report.py` (or extend `test_metrics.py`): first-clip-per-turn counting, perceived column, negatives dropped. *(5.0)*
-- [ ] `tests/integration/test_barge_in.py`: (1) a user-speech frame during TTS output: the output is cancelled within one frame and no more audio frames follow; (2) caller speaks while a fake `book_appointment` is running: exactly one appointment in the DB, and the agent history contains the tool result; (3) the next turn's TTS contains nothing left over from the interrupted turn. **Use the `db` fixture** (the recurring bug from 5.1).
-- [ ] `tests/unit/test_stt_noise.py`: empty/punctuation-only/1-char dropped; `haan`, `हाँ`, `जी`, `ok` pass.
-- [ ] `tests/integration/test_silence.py`: with injected short timeouts or a fake clock, a reprompt happens at 5 s and the call ends after the second silence; the timer doesn't fire while the bot is speaking or a slow tool is running; caller speech resets it.
-- [ ] `tests/integration/test_filler.py`: a slow fake tool (1 s) produces a filler phrase before the answer; a fast one (100 ms) produces none; two slow rounds still give only one filler.
-- [ ] `tests/unit/test_speech_normalise.py`: at least 20 cases covering times, prices, dates and phone numbers, including text with no numbers (unchanged), already-spoken text (unchanged), and both language modes.
+- [x] `tests/unit/test_latency_report.py` (or extend `test_metrics.py`): first-clip-per-turn counting, perceived column, negatives dropped. *(5.0)* — covered as `test_metrics.py`'s `TestLatencySummary`/`TestPerceivedTotalLatency` (perceived column, negatives dropped) plus `test_turn_metrics.py`'s `test_tts_latency_marker_marks_once_per_turn_not_once_per_tts_clip` (first-clip-per-turn), not a standalone file — same coverage, just split across the files where each behaviour actually lives.
+- [x] `tests/integration/test_barge_in.py`: (1) a user-speech frame during TTS output: the output is cancelled within one frame and no more audio frames follow; (2) caller speaks while a fake `book_appointment` is running: exactly one appointment in the DB, and the agent history contains the tool result; (3) the next turn's TTS contains nothing left over from the interrupted turn. **Use the `db` fixture** (the recurring bug from 5.1).
+- [x] `tests/unit/test_stt_noise.py`: empty/punctuation-only/1-char dropped; `haan`, `हाँ`, `जी`, `ok` pass.
+- [x] `tests/integration/test_silence.py`: with injected short timeouts or a fake clock, a reprompt happens at 5 s and the call ends after the second silence; the timer doesn't fire while the bot is speaking or a slow tool is running; caller speech resets it.
+- [x] `tests/integration/test_filler.py`: a slow fake tool (1 s) produces a filler phrase before the answer; a fast one (100 ms) produces none; two slow rounds still give only one filler.
+- [x] `tests/unit/test_speech_normalise.py`: at least 20 cases covering times, prices, dates and phone numbers, including text with no numbers (unchanged), already-spoken text (unchanged), and both language modes. — 39 cases.
 - [x] `tests/unit/test_tools.py`: `transfer_to_human` saves a `CallbackRequest`; `check_slots` returns `suggested` (≤ 3, all inside `slots`) and `total`.
 - [x] Evals: 5 new code-switching cases (5.11) plus the language-match checker (5.10a).
 
@@ -1313,10 +1320,15 @@ pause Y/N) to confirm it's not now *too* long; no unit test can validate that tr
   — see the side-by-side above), so re-running this report on a calmer night before deciding
   whether the 1.5s/2.5s target itself needs revising would be more informative than tuning code
   against tonight's specific outlier spikes.
-- ≥ 9 of 10 manual calls end in a correct booking;
-- barge-in, silence, filler, noise and normalisation tests pass;
-- the overall eval pass rate is ≥ 85% (or an explicit, written decision to accept a lower number, with the reason);
-- Phase 4's STT sample test has run at ≥ 8/10 (C3).
+- ≥ 9 of 10 manual calls end in a correct booking; **✅ met — 10/10.**
+- barge-in, silence, filler, noise and normalisation tests pass; **✅ met — all green in the offline suite.**
+- the overall eval pass rate is ≥ 85% (or an explicit, written decision to accept a lower number, with the reason); **✅ met — 86%.**
+- Phase 4's STT sample test has run at ≥ 8/10 (C3). **✅ met — 9/10.**
+
+**Everything but latency is met.** The one open gate item is latency (above) — plan is to
+re-measure `scripts/latency_report.py` on a calmer night (less Sarvam API flakiness) rather than
+change code against tonight's outlier-driven numbers, then decide whether the target itself needs
+revising or the numbers hold up on their own.
 
 ---
 
