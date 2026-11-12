@@ -147,6 +147,39 @@ def detect_lang(text: str) -> str:
     return "en"
 
 
+# Found during Phase 5's manual voice calls: every call that reached a clean
+# closing had the silence-reprompt fire again right after the bot's own
+# goodbye, because SilenceProcessor has no way to tell "the call just ended"
+# from ordinary silence. is_closing() lets it skip arming the timer once
+# after a turn that sounds like the caller wrapping up - a false positive
+# just means that one reprompt is skipped, not a hard failure, so this is
+# a blunt substring check, not NLP.
+_CLOSING_MARKERS = {
+    "thank you",
+    "thanks",
+    "bye",
+    "goodbye",
+    "that's all",
+    "that's it",
+    "dhanyavaad",
+    "dhanyavad",
+    "shukriya",
+    "alvida",
+    "bas itna",
+    "itna hi",
+    "nahi bas",
+}
+_CLOSING_MARKERS_DEVANAGARI = ("धन्यवाद", "अलविदा", "शुक्रिया", "इतना ही")
+
+
+def is_closing(text: str) -> bool:
+    """True if this utterance sounds like the caller wrapping up the call."""
+    lowered = text.lower()
+    if any(marker in lowered for marker in _CLOSING_MARKERS):
+        return True
+    return any(marker in text for marker in _CLOSING_MARKERS_DEVANAGARI)
+
+
 def _word(n: int, lang: str) -> str:
     return (_HI_WORDS if lang != "en" else _EN_WORDS)[n]
 

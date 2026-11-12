@@ -130,6 +130,26 @@ async def test_second_silence_goodbye_matches_english_caller_via_lang_provider()
 
 
 @pytest.mark.asyncio
+async def test_timer_does_not_start_after_a_closing_sounding_reply():
+    """BUILD_PLAN 5.10's Phase 5 manual-call finding: every one of 9/9 calls
+    that reached a clean closing got a redundant "are you there?" right
+    after the bot's own goodbye. closing_provider lets the timer skip
+    arming itself once for exactly that BotStoppedSpeakingFrame."""
+    down_frames, _ = await run_test(
+        SilenceProcessor(silence_timeout=TIMEOUT, closing_provider=lambda: True),
+        frames_to_send=[
+            LLMFullResponseStartFrame(),
+            LLMFullResponseEndFrame(),
+            LET_CONTROL_FRAMES_DRAIN,
+            BotStoppedSpeakingFrame(),
+            WAIT_PAST_TIMEOUT,
+        ],
+    )
+
+    assert _speak_frames(down_frames) == []
+
+
+@pytest.mark.asyncio
 async def test_timer_does_not_fire_while_bot_is_speaking():
     down_frames, _ = await run_test(
         SilenceProcessor(silence_timeout=TIMEOUT),

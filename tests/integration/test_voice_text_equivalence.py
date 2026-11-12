@@ -390,3 +390,37 @@ async def test_last_caller_lang_tracks_each_real_caller_turn():
         ],
     )
     assert processor2.last_caller_lang == "hi"
+
+
+@pytest.mark.asyncio
+async def test_last_turn_was_closing_tracks_each_real_caller_turn():
+    """BUILD_PLAN 5.10's Phase 5 manual-call finding: SilenceProcessor needs
+    to know the caller sounded like they were wrapping up, even though no
+    new text exists at the moment it would reprompt (silence)."""
+    agent = Agent(FakeLLM(responses=[LLMResponse(content="Theek hai.")]), now=NOW)
+    processor = AgentProcessor(agent)
+    assert processor.last_turn_was_closing is False
+
+    await run_test(
+        processor,
+        frames_to_send=[
+            TranscriptionFrame(
+                text="No thank you, that's all.",
+                user_id="caller",
+                timestamp="2026-11-09T10:00:00Z",
+            ),
+        ],
+    )
+    assert processor.last_turn_was_closing is True
+
+    await run_test(
+        processor,
+        frames_to_send=[
+            TranscriptionFrame(
+                text="Actually, one more thing - is cleaning available tomorrow?",
+                user_id="caller",
+                timestamp="2026-11-09T10:00:05Z",
+            ),
+        ],
+    )
+    assert processor.last_turn_was_closing is False

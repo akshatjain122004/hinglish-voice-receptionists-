@@ -59,7 +59,7 @@ from app.agent import Agent, SarvamLLMClient, fallback_message
 from app.config import get_settings
 from app.db import CallLog, get_session
 from app.metrics import TurnTracker, ensure_file_sink
-from app.speech import detect_lang, normalise_for_speech
+from app.speech import detect_lang, is_closing, normalise_for_speech
 from app.stt_noise import is_noise
 
 OnToolCall = Callable[[str, dict[str, Any], dict[str, Any]], None]
@@ -205,6 +205,13 @@ class AgentProcessor(FrameProcessor):
         # silence reprompt/goodbye also matches the caller's language, even
         # though no new caller text exists at the moment it fires.
         self.last_caller_lang = "hi"
+        # Updated on every real caller turn alongside last_caller_lang; read
+        # by build_pipeline()'s SilenceProcessor (via closing_provider) so
+        # it can skip arming its timer once after a reply to a turn that
+        # sounds like the caller wrapping up - BUILD_PLAN 5.10's Phase 5
+        # manual-call finding: every one of 9/9 calls that reached a clean
+        # closing got a redundant "are you there?" right after it.
+        self.last_turn_was_closing = False
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
@@ -223,6 +230,7 @@ class AgentProcessor(FrameProcessor):
         if isinstance(frame, TranscriptionFrame) and not is_noise(frame.text):
             self._interrupted = False
             self.last_caller_lang = detect_lang(frame.text)
+            self.last_turn_was_closing = is_closing(frame.text)
 
             # Never cancel a booking halfway (BUILD_PLAN 5.2's #1 concern):
             # Pipecat's default interruption handling cancels whatever task is
@@ -381,6 +389,7 @@ class SilenceProcessor(FrameProcessor):
         reprompt_text: str | None = None,
         goodbye_text: str | None = None,
         lang_provider: Callable[[], str] | None = None,
+        closing_provider: Callable[[], bool] | None = None,
         end_call: EndCall | None = None,
         **kwargs: Any,
     ) -> None:
@@ -396,6 +405,9 @@ class SilenceProcessor(FrameProcessor):
         self._reprompt_text_override = reprompt_text
         self._goodbye_text_override = goodbye_text
         self._lang_provider = lang_provider or (lambda: "hi")
+        # closing_provider defaults to "never closing" (unchanged behaviour)
+        # - see app.speech.is_closing's docstring for why this skip exists.
+        self._closing_provider = closing_provider or (lambda: False)
         self._end_call = end_call
         self._turn_in_progress = False
         self._reprompted = False
@@ -412,7 +424,7 @@ class SilenceProcessor(FrameProcessor):
         elif isinstance(frame, BotStartedSpeakingFrame):
             await self._cancel_timer()
         elif isinstance(frame, BotStoppedSpeakingFrame):
-            if not self._turn_in_progress:
+            if not self._turn_in_progress and not self._closing_provider():
                 await self._start_timer()
         elif isinstance(frame, VADUserStartedSpeakingFrame):
             # The caller proved they're on the line - any *future* silence
@@ -528,12 +540,19 @@ def build_pipeline(
         BargeInProcessor(),
         stt,
         agent_processor,
-        # lang_provider reads agent_processor.last_caller_lang live (not a
-        # snapshot) - BUILD_PLAN 5.10's Phase 5 manual-call findings: the
-        # reprompt/goodbye are plain strings, so they need the same
-        # caller-language matching the system prompt and FALLBACK_MESSAGE/
-        # FILLER_TEXT already got.
-        SilenceProcessor(end_call=end_call, lang_provider=lambda: agent_processor.last_caller_lang),
+        # lang_provider/closing_provider read agent_processor's attributes
+        # live (not a snapshot) - BUILD_PLAN 5.10's Phase 5 manual-call
+        # findings: the reprompt/goodbye are plain strings, so they need the
+        # same caller-language matching the system prompt and
+        # FALLBACK_MESSAGE/FILLER_TEXT already got, and skipping the
+        # reprompt once after a closing-sounding turn (see
+        # app.speech.is_closing) stops the redundant "are you there?" that
+        # fired after every single call's own goodbye.
+        SilenceProcessor(
+            end_call=end_call,
+            lang_provider=lambda: agent_processor.last_caller_lang,
+            closing_provider=lambda: agent_processor.last_turn_was_closing,
+        ),
         tts,
     ]
     if turn_tracker is not None:

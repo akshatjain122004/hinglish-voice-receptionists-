@@ -1257,7 +1257,7 @@ pause Y/N) to confirm it's not now *too* long; no unit test can validate that tr
 
   **Findings, for follow-up (fixed during 5.10's continuation, see commits after this one, except where noted):**
   - **Hardcoded single-language strings** (`FILLER_TEXT`, `FALLBACK_MESSAGE`, `SILENCE_REPROMPT_TEXT`/`SILENCE_GOODBYE_TEXT`) bypassed caller-language matching — confirmed audible on English calls (5, 8). **Fixed.**
-  - **Silence-reprompt fires right after the bot's own goodbye** — reproduced on all 9 calls that reached a clean closing.
+  - **Silence-reprompt fires right after the bot's own goodbye** — reproduced on all 9 calls that reached a clean closing. **Fixed:** `app.speech.is_closing()` detects a closing-sounding caller turn (e.g. "thank you", "dhanyavaad", "bas itna hi"); `SilenceProcessor` skips arming its timer once for the `BotStoppedSpeakingFrame` right after such a turn's reply.
   - **Severe, recurring Sarvam latency**: 3 separate 60-70s single-turn stalls (calls 1, 7, 9) plus many 10-30s spikes spread across the whole session, not just early on. Sometimes via `ReadTimeout`, sometimes just slow with no error. External dependency issue, not fixed here.
   - **Call 3: a real interruption-handling failure** (talked over the bot, it didn't stop/respond correctly) — 1 in 10, not yet investigated further.
   - **Call 4: a self-contradictory reply** (offered 10/4 slots, then in the same breath asked to confirm a third, unoffered time) — not yet investigated further.
